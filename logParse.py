@@ -119,10 +119,14 @@ def examineInfo ( d ):
     ## ['_id',   '24',      'object', '240000',     '0',     '0.0',     '240000',    '240000',     'ObjectId(585aeff950b20e44120d558e)', '34',      '1',     '34',   '34',   '34\n']
     ##  0        1          2         3             4        5          6            7             8                                     9          10       11      12      13
 
+    ## note that if/when numUniquVals is 0 it seems that the colType winds up being float64 for no apparent reason ...
+
     for aField in fieldNames:
 
         print ( " " )
         print ( "%s : " % aField )
+
+        outString = aField + "\t"
 
         numChunks = len(d[aField])
 
@@ -143,7 +147,11 @@ def examineInfo ( d ):
             ## first check for a consistent type
             try:
                 typeToken = d[aField][ii][2] 
-                if ( typeToken not in typeList ): typeList += [ typeToken ]
+                ## check that it's not always null in which case type is meaningless...
+                if ( d[aField][ii][7] == '0' ):
+                    typeToken = ''
+                if ( typeToken != '' ):
+                    if ( typeToken not in typeList ): typeList += [ typeToken ]
             except:
                 pass
 
@@ -201,14 +209,25 @@ def examineInfo ( d ):
 
         if ( totNull == totRows ):
             print ( "         ALWAYS null !!! " )
+            outString += "ALWAYS null"
         else:
             print ( "         types found : ", typeList )
             print ( "         totRows=%d   totNull=%d  fracNull=%f " % ( totRows, totNull, float(totNull)/float(totRows) ) )
             print ( "         number of unique values: ", totUniq )
             print ( "         common strings: ", cmnList )
             print ( "         total occurrences: ", cmnCount )
+
+            outString += str(typeList) + "\t" + str(totRows) + "\t" + str(totNull) + "\t" + str(float(totNull)/float(totRows)) + "\t"
+            outString += str(totUniq) + "\t" + str(len(cmnList)) + "\t" + str(cmnCount) + "\t"
             if ( avgN > 0 ):
                 print ( "         range of string lengths: (%d,%d) with avg=%d" % ( minLen, maxLen, avgLen ) )
+                outString += str(minLen) + "\t" + str(maxLen) + "\t" + str(avgLen)
+            else:
+                outString += "\t" + "\t"
+
+        ## TODO this needs to be written to an actual output *file) ...
+        print ("OUT: ",outString)
+ 
 
 
 ##------------------------------------------------------------------------------
