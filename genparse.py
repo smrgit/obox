@@ -6,20 +6,22 @@
     TODO: add a safe_execute utility?
           https://stackoverflow.com/questions/36671077/one-line-exception-handling/36671208
 
-    TODO: still having a problem with multi-line strings -- need to strip them in BS
-
 """
 
 __author__  = "Sheila M Reynolds"
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 __status__  = "Prototype"
 
 import argparse
 import ast
 import csv
+import dateutil
+import distutils.util as util 
 import json
+import logging
 import os
 import pandas as pd
+import re
 import string
 import sys
 import time
@@ -33,12 +35,17 @@ from collections import Counter
 ## BeautifulSoup issues a stern warning if the input text looks like a URL, but I don't care...
 warnings.filterwarnings ( "ignore", category=UserWarning, module='bs4' )
 
+## initialize Logging setup
+logging.basicConfig(format='%(asctime)s  %(levelname)s:%(message)s', 
+                    datefmt='%Y/%m/%d %I:%M:%S %p',
+                    level=logging.DEBUG, 
+                    filename='genparse.logging', filemode='w')
+
 ##----------------------------------------------------------------------------------------------------
 
 def estimateFileSize(fileName):
 
-    print ("in estimateFileSize ... <%s>" % fileName)
-    print (" ")
+    logging.debug("in estimateFileSize ... <%s>" % fileName)
 
     chunkSizeBytes = 333333333
     chunkSizeBytes = 111111111
@@ -85,6 +92,8 @@ def estimateFileSize(fileName):
 
 def isTimeStamp(s):
 
+    logging.debug("in isTimeStamp ... <%s>" % s)
+
     if not isinstance(s,str): return (False)
     if len(s) == 0: return (False)
 
@@ -115,6 +124,9 @@ def isTimeStamp(s):
 ##----------------------------------------------------------------------------------------------------
 
 def isHexBlob(s):
+
+    logging.debug("in isHexBlob ... <%s>" % s[:128])
+
     if s is None: return (False)
     if not isinstance(s,str): return (False)
     if len(s) == 0: return (False)
@@ -126,6 +138,9 @@ def isHexBlob(s):
 ##----------------------------------------------------------------------------------------------------
 
 def findFirstTwoX(s,x):
+
+    logging.debug("in findFirstTwoX ... <%s> <%s>" % (s[:128], x))
+
     i1 = s.find(x)
     if ( i1 > 0 and i1 < 10 ):
         i2 = s.find(x,i1+1)
@@ -136,22 +151,145 @@ def findFirstTwoX(s,x):
     return ( 0, 0 )
 
 ##----------------------------------------------------------------------------------------------------
+def stripPrefixFromStr(s,p):
+
+    ## print ("             in stripPrefixFromStr ... ")
+    if ( str(s) == 'nan' ): return ('')
+
+    if ( not isinstance(s,str) ):
+        print (" ERROR ??? in stripPrefixFromStr but don't have a string ??? ", s, p)
+
+    if ( s.startswith(p) ):
+        np = len(p)
+        t = s[len(p):]
+        return (t)
+
+    return (s)
+
+##----------------------------------------------------------------------------------------------------
+def stripSuffixFromStr(s,p):
+
+    ## print ("             in stripSuffixFromStr ... ")
+    if ( str(s) == 'nan' ): return ('')
+
+    if ( s.endswith(p) ):
+        np = len(p)
+        t = s[:-len(p)]
+        return (t)
+
+    return (s)
+
+##----------------------------------------------------------------------------------------------------
+def handleStandardType(s,p):
+
+    standardTypeList = [ "boolean", "datetime", ]
+
+    print ("             in handleStandardType ... ", s, p)
+    if ( p not in standardTypeList ):
+        logging.warning('invalid standard type ' + p)
+        return (s)
+
+    if ( p=="boolean" ):
+        ## try:
+        if ( 1 ):
+            print (" input: <%s> " % s.strip().lower() )
+            t = str ( bool ( util.strtobool(s.strip().lower()) ) )
+            print (" got back ", t )
+            return (t)
+        ## except:
+        ##     print (" FAILED TO interpret/cast to boolean ??? <%s> " % s.strip().lower() )
+        ##     sys.exit(-1)
+
+    elif ( p=="datetime" ):
+        ##   input: 2018-12-18T15:41:29.554Z
+        ##   Python ISO format:  2018-12-18T15:41:29.554000+00:00
+        try:
+            t = dateutil.parser.parse(s.strip())
+            print (" input: <%s> " % s.strip() )
+            print (" ISO format: ", t.isoformat() )
+            u = str(t.isoformat() )[:23] + 'Z'
+            print (" --> <%s> " % u )
+            return (u)
+        except:
+            print (" FAILED TO interpret as date ??? ", s )
+
+    else:
+        print (" TODO: implement handling for additional pyTypes ... ", p )
+        sys.exit(-1)
+
+##----------------------------------------------------------------------------------------------------
+def handleCustomType(s,p):
+
+    customTypeList = [ "genomic_locus", ]
+
+    print ("             in handleCustomType ... ", s, p)
+
+    if ( p not in customTypeList ):
+        logging.warning('invalid custom type ' + p)
+        return (s)
+
+    if ( p=="genomic_locus" ):
+        ## expecting strings like chrX:1234567 or chr1:98765432-98765437
+
+        t = s
+        if ( str(t) == 'nan' ): return ('')
+
+        if ( not t.startswith('chr') ): t = 'chr' + t
+        u = t.split(':')
+        print(u)
+
+        ## is this something simple like chrX:1234567 ?
+        if ( len(u) == 2 ):
+            try:
+                ipos = int(u[1])
+                ## good to go!
+                return (t)
+            except:
+                print (" (a) more complicated ??? ", t )
+                sys.exit(-1)
+
+        else:
+            print (" (b) more complicated ??? ", t )
+
+        ## catch occasional errors like chrX:chrX:1234567
+
+    sys.exit(-1)
+
+    return (s)
+
+##----------------------------------------------------------------------------------------------------
+def reMatchTest(s,r):
+
+    if ( s == '' ): return (s)
+
+    print ("             in reMatchTest ... ", s, r)
+
+    t = re.match(r,s)
+    if ( t ):
+        print ("                 --> TRUE ")
+        return (s)
+    else:
+        print ("                 --> FALSE ")
+        return ("RE-MATCH-FAIL|"+s)
+
+##----------------------------------------------------------------------------------------------------
 ## TODO: I could potentially switch over to python-dateutil to deal with this ...
 
 def handleDateStr(s):
     
-    ## print ( " (a) in handleDateStr ... %s " % str(s)[:32] )
+    logging.debug("in handleDateStr ... <%s>" % str(s)[:88])
+    ## print (" (a) in handleDateStr ... %s " % str(s)[:88] )
 
     ## types that we do not want to mess with:
     if s is None: return (s)
-    if not isinstance(s,str): return(s)
+    if not isinstance(s,str): return (s)
     if len(s) == 0: return (s)
     if isHexBlob(s): return (s)
     if isTimeStamp(s): return (s)
 
     if ( s.find('://') > 0 ): return (s)
 
-    ## print ( " (b) in handleDateStr ... %s " % s[:32] )
+    ## print (" (b) in handleDateStr ... %s " % s[:32] )
 
     ## we are looking at strings that start with something like:
     ##      2019-08-25
@@ -194,7 +332,7 @@ def handleDateStr(s):
         if ( i3 < 0 ): i3 = p3.find('T')
         p4 = p3[i3:]
         p3 = p3[:i3]
-        ## print ( " split into <%s> and <%s> " % (p3, p4) )
+        ## print (" split into <%s> and <%s> " % (p3, p4) )
 
     ## print ( p1, p2, p3, p4 )
     ## print ( n1, n2, n3 )
@@ -203,7 +341,7 @@ def handleDateStr(s):
     ##     -  -
     if ( i1==4 and i2==7 ):
         s = p1 + '-' + p2 + '-' + p3 + p4
-        ## print ( "     returning <%s> " % s )
+        ## print ("     returning <%s> " % s )
         return (s)
 
     if ( i1==2 and i2 ==5 ):
@@ -211,7 +349,7 @@ def handleDateStr(s):
         ## and we want to convert to 2019-08-25
         if ( len(p3) == 2 ): p3 = '20' + p3
         s = p3 + '-' + p1 + '-' + p2 + p4
-        ## print ( "     returning <%s> " % s )
+        ## print ("     returning <%s> " % s )
         return (s)
 
     if ( i1==1 and i2 ==4 ):
@@ -219,21 +357,22 @@ def handleDateStr(s):
         ## and we want to convert to 2019-08-25
         if ( len(p3) == 2 ): p3 = '20' + p3
         s = p3 + '-' + '0' + p1 + '-' + p2 + p4
-        ## print ( "     returning <%s> " % s )
+        ## print ("     returning <%s> " % s )
         return (s)
 
-    print ( " failed to handle date string ??? !!! ", s )
+    print (" failed to handle date string ??? !!! ", s )
     sys.exit(-1)
 
 ##----------------------------------------------------------------------------------------------------
 
 def quickStrip(s):
 
-    ## print ( " in quickStrip ... <%s> " % s )
+    logging.debug("in quickStrip ... <%s>" % s[:128])
+    ## print (" in quickStrip ... <%s> " % s )
 
     t = ''
     for u in s.splitlines():
-        ## print ( "        <%s> " % u )
+        ## print ("        <%s> " % u )
         if ( len(u) > 0 ):
             if ( len(t) > 0 ):
                 t += ' ' + u
@@ -243,25 +382,27 @@ def quickStrip(s):
     tabSplit = t.split('\t')
     t = ''
     for u in tabSplit:
-        ## print ( "        <%s> " % u )
+        ## print ("        <%s> " % u )
         if ( len(u) > 0 ):
             if ( len(t) > 0 ):
                 t += ' ' + u
             else:
                 t += u
 
-    ## print ( "     returning ... <%s> " % t )
+    ## print ("     returning ... <%s> " % t )
     ## if ( len(t) > 30 ): sys.exit(-1)
 
-    return(t)
+    return (t)
 
 ##----------------------------------------------------------------------------------------------------
 
 def handleMultiLineStr(s):
 
+    logging.debug("in handleMultiLineStr ... <%s>" % str(s)[:88])
+
     ## types that we do not want to mess with:
     if s is None: return (s)
-    if not isinstance(s,str): return(s)
+    if not isinstance(s,str): return (s)
     if isHexBlob(s): return (s)
 
     ## I had written a bunch of hacky code and then realized that I could just use BeautifulSoup!!!
@@ -275,6 +416,8 @@ def handleMultiLineStr(s):
 ##----------------------------------------------------------------------------------------------------
 
 def getMostCommonStrings ( ctrData, n ):
+
+    logging.debug("in getMostCommonStrings ... ")
 
     ## cTmp will be a list of tuples
     cTmp = ctrData.most_common(n+1)
@@ -298,8 +441,28 @@ class DataTable:
     pass
 
     # Initializer / Instance Attributes
-    def __init__(self, dataFileName):
+    def __init__(self, dataFileName, configFileName):
+        logging.debug("in DataTable.__init__ method")
+        self.loadConfig(configFileName)
+        self.initDataLoad(dataFileName)
+        self.initDLogFile()
 
+    # load configuration information from JSON file
+    def loadConfig(self, configFileName):
+        logging.debug("in DataTable.loadConfig method " + configFileName )
+        try:
+            with open(configFileName) as config_file:
+                logging.debug(" opened config file " + configFileName)
+                self.config = json.load(config_file)
+            print(self.config)
+        except:
+            logging.critical('Failed to read config info from file ' + configFileName)
+            self.config = {}
+            sys.exit(-1)
+
+    # get set up to read input CSV data file using an iterator
+    def initDataLoad(self, dataFileName):
+        logging.debug("in DataTable.initDataLoad method " + dataFileName )
         try:
             self.dataFileName = dataFileName
             ( fileSize, rowCountEst, chunkSizeRows, numChunks ) = estimateFileSize(dataFileName)
@@ -310,13 +473,6 @@ class DataTable:
             self.numChunks = numChunks
             self.ithChunk = 0
 
-            self.logFileName = dataFileName[:-4] + '.log'
-            print (" opening log file <%s> " % self.logFileName)
-            self.logFh = open ( self.logFileName, 'w' )
-
-            hdrString = "colName\tithChunk\tcolType\tlen(colData)\tnumNull\tfracNull\tnumNotNull\tnumUniqVals\tcommonStr\tcommonLen\tcommonN\tminLen\tmaxLen\tavgLen"
-            self.logFh.write("%s\n" % hdrString)
-
             ## print (" Trying to read input CSV from <%s> " % dataFileName)
             ## self.df = pd.read_csv(dataFileName, low_memory=False, skipinitialspace=True, keep_default_na=True, na_values=['[]','{}','na',':'])
             
@@ -324,39 +480,77 @@ class DataTable:
             self.csvIter = pd.read_csv(dataFileName, dtype=str, low_memory=False, iterator=True, 
                                        skipinitialspace=True, keep_default_na=True, 
                                        na_values=['[]','{}','na',':','EditMe'])
-            print (" --> got iterator! ")
+            logging.info(' --> got CSV file iterator')
 
         except:
-            print (" Ooops -- handling an exception (?) in DataTable __init__ function ")
-            print (" Assuming FATAL ERROR ")
+            logging.critical('Failed to open data file ' + dataFileName)
             print ( sys.exc_info() )
             sys.exit(-1)
 
+    # initialize the data-log file (which is different from the 'logging' file)
+    def initDLogFile(self):
+            logging.debug("in DataTable.initDLogFile method")
+            self.dlogFileName = self.dataFileName[:-4] + '.dlog'
+            print (" opening log file <%s> " % self.dlogFileName)
+            self.dlogFh = open ( self.dlogFileName, 'w' )
 
-    @staticmethod
-    def cleanOneCol(x):
-        ## print ( " in cleanOneCol ... ", x.dtype )
-    
-        if ( x.dtype=='object' or x.dtype=='str' ):
+            logHdrString = "colName\tithChunk\tcolType\tlen(colData)\tnumNull\tfracNull\tnumNotNull\tnumUniqVals\tcommonStr\tcommonLen\tcommonN\tminLen\tmaxLen\tavgLen"
+            self.dlogFh.write("%s\n" % logHdrString)
 
-            try:
-                x = x.str.strip()
+    def handleOneCol(self, x):
+        logging.debug("in DataTable.handleOneCol method ... name is " + x.name + " and data-type is " + str(x.dtype))
+        print("in DataTable.handleOneCol method ... name is " + x.name + " and data-type is " + str(x.dtype))
+
+        # get configuration parameters for this column
+        try:
+            xConfig = self.config[x.name]
+        except:
+            xConfig = {}
+
+        print (" in handleOneCol ... ", json.dumps(xConfig,indent=4) )
+
+        # stripPrefix
+        if ( "stripPrefix" in xConfig ):
+            p = xConfig["stripPrefix"]
+            print ("     --> prefix string : <%s> " % p )
+            print ("     --> calling x.apply ... " )
+            x = x.apply ( stripPrefixFromStr, args=(p,) )
+
+        # stripSuffix
+        if ( "stripSuffix" in xConfig ):
+            p = xConfig["stripSuffix"]
+            print ("     --> suffix string : <%s> " % p )
+            print ("     --> calling x.apply ... " )
+            x = x.apply ( stripSuffixFromStr, args=(p,) )
+
+        # reMatch
+        if ( "reMatch" in xConfig ):
+            r = xConfig["reMatch"]
+            print ("     --> re match string : <%s> " % r )
+            x = x.apply ( reMatchTest, args=(r,) )
+
+        # "built-in" handling for 'standard' Python data types ...
+        if ( "pyType" in xConfig ):
+            p = xConfig["pyType"]
+            print ("     --> python type : <%s> " % p )
+            x = x.apply ( handleStandardType, args=(p,) )
+
+        # "custom" handling for 'unusual' data types ...
+        if ( "customType" in xConfig ):
+            p = xConfig["customType"]
+            print ("     --> custom type : <%s> " % p )
+            x = x.apply ( handleCustomType, args=(p,) )
+
+        try:
+            print ("         --> returning ", x[0], x[-1] )
+        except:
+            pass
+
+        return (x)
     
-                x = x.str.replace('\btrue\b', 'True',  case=False,regex=True)
-                x = x.str.replace('\bfalse\b','False', case=False,regex=True)
-                x = x.str.replace('\byes\b',  'Yes',   case=False,regex=True)
-                x = x.str.replace('\bno\b',   'No',    case=False,regex=True)
-    
-                x = x.str.replace('\x0d', '', case=True, regex=False)
-            except:
-                print ("         WARNING: in cleanOneCol, failed in the x.str.* block ")
-    
-            x = x.apply ( handleDateStr )
-            x = x.apply ( handleMultiLineStr )
-    
-        return ( x )
 
     def getNextChunk(self):
+        logging.debug("in DataTable.getNextChunk method")
         try:
             print (" in getNextChunk ... ", self.chunkSizeRows)
             self.chunkDf = self.csvIter.get_chunk(self.chunkSizeRows)
@@ -372,15 +566,31 @@ class DataTable:
             return ( False )
 
 
-    def examineChunk(self):
-        ## this method will do the 'cleaning' of the data ...
+    def processChunk(self):
+        ## this method processes one chunk of the input dataframe ...
 
-        ## first, we apply the cleanOneCol to each column in the dataframe
-        trim1 = self.chunkDf.apply(self.cleanOneCol)
+        ## before we do anything else, we can drop any of the fields
+        ## that have been flagged as to-be-dropped in the input config
+        colNames = self.chunkDf.columns.array
+        dropList = []
+        for aName in colNames:
+            if ( aName in self.config ):
+                if ( "dropField" in self.config[aName] ):
+                    if ( self.config[aName]["dropField"].lower() == "true" ):
+                        dropList += [ aName ]
+        if ( len(dropList) > 0 ):
+            print (" DROPPING one or more columns ... ", dropList )
+            print ( self.chunkDf.shape )
+            self.chunkDf = self.chunkDf.drop (columns=dropList)
+            print ( self.chunkDf.shape )
+            colNames = self.chunkDf.columns.array
+            print (" ")
+       
+        ## first, we apply the handleOneCol to each column in the dataframe
+        trim1 = self.chunkDf.apply(self.handleOneCol)
         self.chunkDf = trim1
 
         ## and now we can git a bit further ...
-        colNames = self.chunkDf.columns.array
         colTypes = self.chunkDf.dtypes
         numCol = len(colNames)
         numRows = len(self.chunkDf)
@@ -449,17 +659,17 @@ class DataTable:
                 maxLen = -1
 
             outString += str(minLen) + "\t" + str(maxLen) + "\t" + str(avgLen) 
-            self.logFh.write("%s\n" % outString)
+            self.dlogFh.write("%s\n" % outString)
 
             if ( maxLen > 0 ):
-                print ( "LONGEST string representation is %d characters" % maxLen )
+                print ("LONGEST string representation is %d characters" % maxLen )
             if ( maxLen > 1024 ): 
-                print ( "    THIS IS VERY LONG and may need to be truncated ... " )
-                print ( "     --> first 128 chars: ", maxStr[:128] )
-                print ( "     --> last  128 chars: ", maxStr[-128:] )
-                print ( "  " )
+                print ("    THIS IS VERY LONG and may need to be truncated ... " )
+                print ("     --> first 128 chars: ", maxStr[:128] )
+                print ("     --> last  128 chars: ", maxStr[-128:] )
+                print ("  " )
             if ( avgLen > 8192 ):
-                print ( "     AVERAGE length is %d ... field should probably be ommitted ??? " % avgLen )
+                print ("     AVERAGE length is %d ... field should probably be ommitted ??? " % avgLen )
     
             if ( numUniqVals == 0 ):
                 print ("ALWAYS empty or null!")
@@ -500,8 +710,8 @@ class DataTable:
                 nrKeys.sort()
                 for key in nrKeys:
                     if ( nrDict[key] > 1 ): del nrDict[key]
-                print ( "number of unique non-null values: ", len(uniqDict) )
-                print ( "number of non-null AND non-repeating values (occur only once each): ", len(nrDict) )
+                print ("number of unique non-null values: ", len(uniqDict) )
+                print ("number of non-null AND non-repeating values (occur only once each): ", len(nrDict) )
 
                 ## pull out the single most common value ...
                 ( aVal, aCount ) = ctrData.most_common(1)[0]
@@ -512,71 +722,71 @@ class DataTable:
                 if isinstance(aVal,float): continue
                 if isinstance(aVal,bool):  continue
                 if isHexBlob(aVal): 
-                    print ( "     --> this looks like a Hex Blob ... " )
+                    print ("     --> this looks like a Hex Blob ... " )
                     continue
 
                 ## and let's see if 'evaluating' this string produces anything
                 ## different ...
                 try:
-                    ## print ( " trying out literal_eval ... " )
+                    ## print (" trying out literal_eval ... " )
                     eVal1 = ast.literal_eval(aVal)
                     if ( eVal1 != aVal ):
                         if isinstance(eVal1,list):
-                            print ( "     --> result of evaluation is a LIST of length %d " % len(eVal1) )
+                            print ("     --> result of evaluation is a LIST of length %d " % len(eVal1) )
                             if ( len(eVal1) == 1 ):
                                 eVal2 = ast.literal_eval(eVal1[0])
 
                                 if ( eVal2 != eVal1[0] ):
                                     if isinstance(eVal2,list):
-                                        print ( "     --> next result of evaluation is a LIST of length %d " % len(eVal2) )
+                                        print ("     --> next result of evaluation is a LIST of length %d " % len(eVal2) )
                                     elif isinstance(eVal2,dict):
-                                        print ( "     --> result of evaluation is a DICT of length %d " % len(eVal2) )
+                                        print ("     --> result of evaluation is a DICT of length %d " % len(eVal2) )
 
-                                print ( "     2nd literal_eval : \n", type(eVal2), "\n", eVal2 )
+                                print ("     2nd literal_eval : \n", type(eVal2), "\n", eVal2 )
                                 if isinstance(eVal2,dict):
-                                    print ( "     --> result of evaluation is a DICT of length %d " % len(eVal2) )
+                                    print ("     --> result of evaluation is a DICT of length %d " % len(eVal2) )
                                     eKeys = list(eVal2.keys())
                                     nKeys = len(eKeys)
-                                    print ( "         dict has %d keys " % nKeys, eKeys )
+                                    print ("         dict has %d keys " % nKeys, eKeys )
                                     eKeys.sort()
                                     aKey = eKeys[nKeys//2]
-                                    print ( "         for example ... %s: %s " % ( aKey, eVal2[aKey] ) )
+                                    print ("         for example ... %s: %s " % ( aKey, eVal2[aKey] ) )
 
                         elif isinstance(eVal1,dict):
-                            print ( "     --> result of evaluation is a DICT of length %d " % len(eVal1) )
+                            print ("     --> result of evaluation is a DICT of length %d " % len(eVal1) )
                             eKeys = list(eVal1.keys())
                             nKeys = len(eKeys)
-                            print ( "     dict has %d keys " % nKeys, eKeys )
+                            print ("     dict has %d keys " % nKeys, eKeys )
                             eKeys.sort()
                             aKey = eKeys[nKeys//2]
-                            print ( "     for example ... %s: %s " % ( aKey, eVal1[aKey] ) )
+                            print ("     for example ... %s: %s " % ( aKey, eVal1[aKey] ) )
                    
                 except:
-                    ## print ( "    failed to run literal_eval on this string <%s> " % str(aVal) )
-                    ## print ( "    trying to load as JSON instead? " )
+                    ## print ("    failed to run literal_eval on this string <%s> " % str(aVal) )
+                    ## print ("    trying to load as JSON instead? " )
                     if ( aVal.find('{')>=0 or aVal.find('[')>=0 ):
                         try:
                             jVal1 = json.loads(str(aVal))
                             bVal = json.dumps(jVal1, indent=4) 
                             if ( bVal != aVal ):
-                                print ( " YAY!!! JSON!!! " )
+                                print (" YAY!!! JSON!!! " )
                                 print ( bVal )
-                                print ( " " )
+                                print (" " )
                         except:
-                            ## print ( "         also failed to parse as JSON ... " )
+                            ## print ("         also failed to parse as JSON ... " )
                             pass
                             
                 ## now the THREE most common values ...
                 if ( aCount > 1 ):
                     c3 = ctrData.most_common(3)
-                    print ( "3 most common values: \n", c3[0], "\n", c3[1], "\n", c3[2], "\n" )
+                    print ("3 most common values: \n", c3[0], "\n", c3[1], "\n", c3[2], "\n" )
 
 
 ##----------------------------------------------------------------------------------------------------
 
 def main (args):
 
-    myData = DataTable(args.inputFile)
+    myData = DataTable(args.inputFile,args.configFile)
 
     done = False
     numChunks = 0
@@ -587,7 +797,7 @@ def main (args):
             print (" ***************** ")
             print (" **  CHUNK #%3d ** " % numChunks)
             print (" ***************** ")
-            myData.examineChunk()
+            myData.processChunk()
         else:
             done = True
 
@@ -604,8 +814,10 @@ if __name__ == '__main__':
     t0 = time.time()
 
     parser = argparse.ArgumentParser()
-    parser.add_argument ('-f', '--inputFileName', action='store', help='input CSV file', 
+    parser.add_argument ('-f', '--inputFileName', action='store', help='input CSV data file', 
                          required=True, dest='inputFile', type=str)
+    parser.add_argument ('-c', '--configFileName', action='store', help='input JSON config file', 
+                         required=True, dest='configFile', type=str)
     args = parser.parse_args()
 
     main (args)
