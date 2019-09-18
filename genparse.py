@@ -35,12 +35,6 @@ from collections import Counter
 ## BeautifulSoup issues a stern warning if the input text looks like a URL, but I don't care...
 warnings.filterwarnings ( "ignore", category=UserWarning, module='bs4' )
 
-## initialize Logging setup
-logging.basicConfig(format='%(asctime)s  %(levelname)s:%(message)s', 
-                    datefmt='%Y/%m/%d %I:%M:%S %p',
-                    level=logging.DEBUG, 
-                    filename='genparse.logging', filemode='w')
-
 ##----------------------------------------------------------------------------------------------------
 
 def estimateFileSize(fileName):
@@ -89,39 +83,36 @@ def estimateFileSize(fileName):
     return ( fileSize, rowCountEst, chunkSizeRows, numChunks )
 
 ##----------------------------------------------------------------------------------------------------
+## BigQuery data types = ['string','bytes','integer','float','boolean','record','timestamp']
 
-def isTimeStamp(s):
+def getFieldType ( fConfig ):
 
-    logging.debug("in isTimeStamp ... <%s>" % s)
+    ## print (" ... in getFieldType ... ", fConfig)
 
-    if not isinstance(s,str): return (False)
-    if len(s) == 0: return (False)
+    if ( 'bqType' in fConfig ):
+        return ( fConfig['bqType'] )
 
-    ## 2016-02-01T16:15:04.934Z
-    ## 012345678901234567890123
-    try:
-        if ( s[-1] != 'Z' ): return (False)
-    except:
-        pass
+    for aKey in fConfig:
+        if ( aKey.lower().find("type") > 0 ): 
+            if ( fConfig[aKey] == 'boolean' ): return ( 'boolean' )
+            if ( fConfig[aKey] == 'datetime' ): return ( 'timestamp' )
+            if ( fConfig[aKey] == 'genomic_locus' ): return ( 'string' )
+            if ( fConfig[aKey] == 'chromosome' ): return ( 'string' )
+            print ( "UHOH in getFieldType: what should I do with this ??? ", aKey, fConfig[aKey] )
 
-    try:
-        if ( s[4] != '-' ): return (False)
-    except:
-        pass
-
-    try:
-        if ( s[7] != '-' ): return (False)
-    except:
-        pass
-
-    try:
-        if ( s[10] != 'T' ): return (False)
-    except:
-        pass
-
-    return (True)
+    return ( 'string' )
 
 ##----------------------------------------------------------------------------------------------------
+## optional descriptive text for this field that can go into the BigQuery JSON schema file
+
+def getFieldDescription ( fConfig ):
+    if ( 'description' in fConfig ):
+        return ( fConfig['description'] )
+    else:
+        return ('')
+
+##----------------------------------------------------------------------------------------------------
+## TODO: get rid of this ???
 
 def isHexBlob(s):
 
@@ -137,27 +128,23 @@ def isHexBlob(s):
 
 ##----------------------------------------------------------------------------------------------------
 
-def findFirstTwoX(s,x):
+def stripBlanks(s):
 
-    logging.debug("in findFirstTwoX ... <%s> <%s>" % (s[:128], x))
+    if ( str(s) == 'nan' ): return ('')
+    if ( not isinstance(s,str) ): return (s)
 
-    i1 = s.find(x)
-    if ( i1 > 0 and i1 < 10 ):
-        i2 = s.find(x,i1+1)
-        if ( i2 > 0 and i2 < 10 ):
-            ## print ( s, i1, i2 )
-            return ( i1, i2 )
-
-    return ( 0, 0 )
+    return ( s.strip() )
 
 ##----------------------------------------------------------------------------------------------------
+## strip the specified prefix (if present) from the input string ...
+
 def stripPrefixFromStr(s,p):
 
     ## print ("             in stripPrefixFromStr ... ")
     if ( str(s) == 'nan' ): return ('')
 
     if ( not isinstance(s,str) ):
-        print (" ERROR ??? in stripPrefixFromStr but don't have a string ??? ", s, p)
+        print (" UHOH ??? in stripPrefixFromStr but don't have a string ??? ", s, p)
 
     if ( s.startswith(p) ):
         np = len(p)
@@ -167,6 +154,8 @@ def stripPrefixFromStr(s,p):
     return (s)
 
 ##----------------------------------------------------------------------------------------------------
+## strip the specified suffix (if present) from the input string ...
+
 def stripSuffixFromStr(s,p):
 
     ## print ("             in stripSuffixFromStr ... ")
@@ -180,21 +169,27 @@ def stripSuffixFromStr(s,p):
     return (s)
 
 ##----------------------------------------------------------------------------------------------------
+## handle the 'standard' types ...
+
 def handleStandardType(s,p):
 
-    standardTypeList = [ "boolean", "datetime", ]
+    if ( s == '' ): return (s)
+    if ( str(s) == 'nan' ): return ('')
 
-    print ("             in handleStandardType ... ", s, p)
+    standardTypeList = [ "boolean", "datetime", "date", "integer", "float", "string" ]
+
+    ## print ("             in handleStandardType ... ", s, p)
     if ( p not in standardTypeList ):
         logging.warning('invalid standard type ' + p)
+        print ( " UHOH -- invalid standard type " )
         return (s)
 
     if ( p=="boolean" ):
         ## try:
         if ( 1 ):
-            print (" input: <%s> " % s.strip().lower() )
+            ## print (" input: <%s> " % s.strip().lower() )
             t = str ( bool ( util.strtobool(s.strip().lower()) ) )
-            print (" got back ", t )
+            ## print (" got back ", t )
             return (t)
         ## except:
         ##     print (" FAILED TO interpret/cast to boolean ??? <%s> " % s.strip().lower() )
@@ -205,27 +200,70 @@ def handleStandardType(s,p):
         ##   Python ISO format:  2018-12-18T15:41:29.554000+00:00
         try:
             t = dateutil.parser.parse(s.strip())
-            print (" input: <%s> " % s.strip() )
-            print (" ISO format: ", t.isoformat() )
+            ## print (" input: <%s> " % s.strip() )
+            ## print (" ISO format: ", t.isoformat() )
             u = str(t.isoformat() )[:23] + 'Z'
-            print (" --> <%s> " % u )
+            ## print (" --> <%s> " % u )
             return (u)
         except:
-            print (" FAILED TO interpret as date ??? ", s )
+            print (" UHOH FAILED to interpret as datetime ??? ", s )
+
+    elif ( p=="date" ):
+        try:
+            t = dateutil.parser.parse(s.strip())
+            ## print (" input: <%s> " % s.strip() )
+            ## print (" ISO format: ", t.isoformat() )
+            u = str(t.isoformat() )[:10] 
+            ## print (" --> <%s> " % u )
+            return (u)
+        except:
+            if ( s == "00/00/0000" ): return ('')
+            print (" UHOH FAILED to interpret as date ??? ", s )
+
+    elif ( p=="integer" ):
+        try:
+            t = int(s.strip())
+            u = str(t)
+            return (u)
+        except:
+            print (" UHOH FAILED to interpret as integer ??? ", s )
+
+    elif ( p=="float" ):
+        try:
+            t = float(s.strip())
+            u = str(t)
+            return (u)
+        except:
+            print (" UHOH FAILED to interpret as float ??? ", s )
+
+    elif ( p=="string" ):
+        ## nothing really needs to be done, this 'type' is just being
+        ## included for completeness...
+        return (s)
 
     else:
-        print (" TODO: implement handling for additional pyTypes ... ", p )
+        print (" UHOH  TODO: implement handling for additional pyTypes ... ", p )
         sys.exit(-1)
 
 ##----------------------------------------------------------------------------------------------------
+## TODO: add custom 'types' for the g.* c.* and p.* notation
+##       also the ability to map single-letter amino acid abbreviations to 3-letter abbrev's
 def handleCustomType(s,p):
 
-    customTypeList = [ "genomic_locus", ]
+    chrList = [ '1', '2', '3', '4', '5', '6', '7', '8', '9', '10',
+               '11','12','13','14','15','16','17','18','19', '20',
+               '21','22', 'X', 'Y', 'M' ]
 
-    print ("             in handleCustomType ... ", s, p)
+    if ( str(s) == 'nan' ): return ('')
+    if ( s == '' ): return (s)
+
+    customTypeList = [ "genomic_locus", "chromosome", ]
+
+    ## print ("             in handleCustomType ... ", s, p)
 
     if ( p not in customTypeList ):
         logging.warning('invalid custom type ' + p)
+        print (" UHOH ... invalid custom type ", p)
         return (s)
 
     if ( p=="genomic_locus" ):
@@ -236,7 +274,14 @@ def handleCustomType(s,p):
 
         if ( not t.startswith('chr') ): t = 'chr' + t
         u = t.split(':')
-        print(u)
+        while ( '' in u ): u.remove('')
+        ## print(u)
+
+        v = u[0][3:]
+        if ( v not in chrList ):
+            print ( " INVALID chromosome ??? ", u )
+            print (" --> re-setting entire string to blank ", s, t, u)
+            return ('')
 
         ## is this something simple like chrX:1234567 ?
         if ( len(u) == 2 ):
@@ -244,130 +289,144 @@ def handleCustomType(s,p):
                 ipos = int(u[1])
                 ## good to go!
                 return (t)
+
+            ## if it's not, then is it something like chr17:112233-123456 ?
             except:
-                print (" (a) more complicated ??? ", t )
-                sys.exit(-1)
+                if ( u[1].find('-') > 0 ):
+                    v = u[1].split('-')
+                    if ( len(v) == 2 ):
+                        try:
+                            ipos = int(v[0])
+                            jpos = int(v[1])
+                            ## good to go!
+                            return (t)
+                        except:
+                            print (" (c) UHOH more complicated ??? ", s, t, u )
+                print (" (a) UHOH more complicated ??? ", s, t, u )
+                print ("     --> returning (%s) " % t )
+                ## oh well, just return what we have ...
+                return (t)
 
         else:
-            print (" (b) more complicated ??? ", t )
 
-        ## catch occasional errors like chrX:chrX:1234567
+            ## if thre is no ':' then what exactly do we have ???
+            ## it's also possible that we have just something like 'chr17:' ...
+            if ( len(u) == 1 ):
+                t = u[0][3:]
+                if t in chrList:
+                    ## if its just the chromosome, it's not really a
+                    ## valid 'locus' but we'll return it anyway ...
+                    return ( u[0] )
 
-    sys.exit(-1)
+                ## otherwise, let's dump it
+                print (" UHOH BAD genomic locus ??? !!! <%s> " % t)
+                print (" --> re-setting to blank")
+                return ('')
 
+            else:
+
+                ## one common error is that the string looks like
+                ## this:  chr3:chr3:987654
+                ## in which case we want to remove the leading 'chr3:'
+                if ( u[1].startswith('chr') ):
+                    if ( u[0] == u[1] ):
+                        u.remove(u[0])
+                        if ( len(u) == 2 ):
+                            try:
+                                ipos = int(u[1])
+                                return ( u[0] + ':' + u[1] )
+                            except:
+                                print (" (c) UHOH new error type ??? ", t)
+                    else:
+                        print (" UHOH BAD genomic locus ??? !!! <%s> " % t)
+                print (" (b) UHOH more complicated ??? ", t )
+                print ("     --> returning (%s) " % t )
+                ## oh well, just return what we have ...
+                return (t)
+
+        print ( " UHOH ... CRASHING in handleCustomType ... ", s, t )
+        sys.exit(-1)
+
+    if ( p=="chromosome" ):
+        if ( not s.startswith('chr') ): s = 'chr' + s
+        t = s[3:]
+        if t not in chrList:
+            print ( " UHOH INVALID chromosome ??? ", s, t )
+            print (" --> re-setting to blank")
+            return ('')
+        else:
+            ## good to go!
+            return (s)
+
+    print (" UHOH TODO: write more code in handleCustomType !!! ", s)
     return (s)
 
 ##----------------------------------------------------------------------------------------------------
 def reMatchTest(s,r):
 
     if ( s == '' ): return (s)
-
-    print ("             in reMatchTest ... ", s, r)
+    if ( str(s) == 'nan' ): return ('')
+    ## print ("             in reMatchTest ... ", s, r)
 
     t = re.match(r,s)
     if ( t ):
-        print ("                 --> TRUE ")
+        ## print ("                 --> TRUE ")
         return (s)
     else:
-        print ("                 --> FALSE ")
+        ## print ("                 --> FALSE ")
         return ("RE-MATCH-FAIL|"+s)
 
 ##----------------------------------------------------------------------------------------------------
-## TODO: I could potentially switch over to python-dateutil to deal with this ...
 
-def handleDateStr(s):
-    
-    logging.debug("in handleDateStr ... <%s>" % str(s)[:88])
-    ## print (" (a) in handleDateStr ... %s " % str(s)[:88] )
+def enforceAllowed(s,aList,mDict):
 
-    ## types that we do not want to mess with:
-    if s is None: return (s)
-    if not isinstance(s,str): return (s)
-    if len(s) == 0: return (s)
-    if isHexBlob(s): return (s)
-    if isTimeStamp(s): return (s)
+    if ( str(s) == 'nan' ): return ('')
+    ## print (" in enforceAllowed ... ", aList, mDict)
 
-    if ( s.find('://') > 0 ): return (s)
+    for m in mDict:
+        b = m.lower()
+        t = s.lower()
+        if ( t == b ): 
+            ## print ("     --> applying mapping", s, m, mDict[m])
+            s = mDict[m]
 
-    ## print (" (b) in handleDateStr ... %s " % s[:32] )
+    for a in aList:
+        t = s.lower()
+        b = a.lower()
+        if ( t == b ): 
+            ## print ("     --> found allowed match ", s, a)
+            return (s)
 
-    ## we are looking at strings that start with something like:
-    ##      2019-08-25
-    ## or   2019/08/25
-    ## or   8/25/2019
-    ## or   8/5/2019
-    ## or   8/5/19
-        
-    if ( len(s) < 6 ): return (s)
-
-    i1, i2 = findFirstTwoX ( s, '-' )
-    if ( i2 == 0 ):
-        i1, i2 = findFirstTwoX ( s, '/' )
-    if ( i2 == 0 ): return (s)
-
-    ## print ( i1, i2, s[:30] )
-
-    if ( (i2-i1) != 3 ): return (s)
-
-    p1 = s[:i1]
-    p2 = s[i1+1:i2]
-    p3 = s[i2+1:]
-    p4 = ''
-
-    ## first let's test that the first two substrings 
-    ## convert to integers w/o any problem ...
-    try:
-        n1 = int(p1)
-        n2 = int(p2)
-    except:
-        return (s)
-
-    ## the third substring might fail if it's too long
-    ## or has something else coming after the date ...
-    try:
-        n3 = int(p3)
-    except:
-        if len(p3) < 2: return (s)
-        i3 = p3.find(' ')
-        if ( i3 < 0 ): i3 = p3.find('T')
-        p4 = p3[i3:]
-        p3 = p3[:i3]
-        ## print (" split into <%s> and <%s> " % (p3, p4) )
-
-    ## print ( p1, p2, p3, p4 )
-    ## print ( n1, n2, n3 )
-
-    ## 012345678901234567890
-    ##     -  -
-    if ( i1==4 and i2==7 ):
-        s = p1 + '-' + p2 + '-' + p3 + p4
-        ## print ("     returning <%s> " % s )
-        return (s)
-
-    if ( i1==2 and i2 ==5 ):
-        ## we have either 08/25/19 or 08/25/2019
-        ## and we want to convert to 2019-08-25
-        if ( len(p3) == 2 ): p3 = '20' + p3
-        s = p3 + '-' + p1 + '-' + p2 + p4
-        ## print ("     returning <%s> " % s )
-        return (s)
-
-    if ( i1==1 and i2 ==4 ):
-        ## we have either 8/25/19 or 8/25/2019
-        ## and we want to convert to 2019-08-25
-        if ( len(p3) == 2 ): p3 = '20' + p3
-        s = p3 + '-' + '0' + p1 + '-' + p2 + p4
-        ## print ("     returning <%s> " % s )
-        return (s)
-
-    print (" failed to handle date string ??? !!! ", s )
+    print (" UHOH failed to match to allowed strings !!! ", s, aList )
     sys.exit(-1)
+
+##----------------------------------------------------------------------------------------------------
+
+def string2list(s):
+
+    if ( str(s) == 'nan' ): return ('')
+    if ( s == '' ): return ('') 
+
+    ## print (" in string2list ... ")
+    ## print (" >>> %s <<< " % s )
+
+    sList = []
+    for u in s.splitlines():
+        u = u.strip()
+        if ( len(u) > 0 ): sList += [ u ]
+
+    if ( len(sList) < 1 ): return ('')
+
+    ## print ("     --> returning : ", len(sList), str(sList) )
+    return ( str(sList) )
 
 ##----------------------------------------------------------------------------------------------------
 
 def quickStrip(s):
 
-    logging.debug("in quickStrip ... <%s>" % s[:128])
+    if ( str(s) == 'nan' ): return ('')
+
+    logging.debug("in quickStrip ... <%s>" % str(s)[:88])
     ## print (" in quickStrip ... <%s> " % s )
 
     t = ''
@@ -396,28 +455,10 @@ def quickStrip(s):
 
 ##----------------------------------------------------------------------------------------------------
 
-def handleMultiLineStr(s):
-
-    logging.debug("in handleMultiLineStr ... <%s>" % str(s)[:88])
-
-    ## types that we do not want to mess with:
-    if s is None: return (s)
-    if not isinstance(s,str): return (s)
-    if isHexBlob(s): return (s)
-
-    ## I had written a bunch of hacky code and then realized that I could just use BeautifulSoup!!!
-    if ( s.find('<')>= 0 or s.find('\\')>=0 ):
-        ## print (" trying to make soup ... ", len(s))
-        soup = bs(s)
-        return ( soup.get_text(" ",strip=True) )
-    else:
-        return ( quickStrip(s) )
-
-##----------------------------------------------------------------------------------------------------
-
 def getMostCommonStrings ( ctrData, n ):
 
     logging.debug("in getMostCommonStrings ... ")
+    ## print (" in getMostCommonStrings ... ", n)
 
     ## cTmp will be a list of tuples
     cTmp = ctrData.most_common(n+1)
@@ -442,10 +483,21 @@ class DataTable:
 
     # Initializer / Instance Attributes
     def __init__(self, dataFileName, configFileName):
+
+        ## initialize Logging setup
+        ## set filemode='w' to overwrite with new logging file each time
+        ##              'a' for appending
+        self.logFileName = dataFileName[:-4] + '.logging'
+        logging.basicConfig(format='%(asctime)s  %(levelname)s:%(message)s', 
+                            datefmt='%Y/%m/%d %I:%M:%S %p',
+                            level=logging.DEBUG, 
+                            filename=self.logFileName, filemode='w')
+
         logging.debug("in DataTable.__init__ method")
         self.loadConfig(configFileName)
         self.initDataLoad(dataFileName)
         self.initDLogFile()
+
 
     # load configuration information from JSON file
     def loadConfig(self, configFileName):
@@ -479,7 +531,7 @@ class DataTable:
             print (" getting csv iterator ... ")
             self.csvIter = pd.read_csv(dataFileName, dtype=str, low_memory=False, iterator=True, 
                                        skipinitialspace=True, keep_default_na=True, 
-                                       na_values=['[]','{}','na',':','EditMe'])
+                                       na_values=['[]','{}','na',':','::','EditMe', 'Please edit me'])
             logging.info(' --> got CSV file iterator')
 
         except:
@@ -497,6 +549,14 @@ class DataTable:
             logHdrString = "colName\tithChunk\tcolType\tlen(colData)\tnumNull\tfracNull\tnumNotNull\tnumUniqVals\tcommonStr\tcommonLen\tcommonN\tminLen\tmaxLen\tavgLen"
             self.dlogFh.write("%s\n" % logHdrString)
 
+    def initOutput(self, outputFile, schemaFile):
+        if ( outputFile ): self.outputFile = outputFile
+        if ( schemaFile ): self.schemaFile = schemaFile
+        self.fhOut = open ( self.outputFile, 'w' )
+        self.emptyOutput = True
+        ## self.outputSep = '\t'
+        self.outputSep = ','
+
     def handleOneCol(self, x):
         logging.debug("in DataTable.handleOneCol method ... name is " + x.name + " and data-type is " + str(x.dtype))
         print("in DataTable.handleOneCol method ... name is " + x.name + " and data-type is " + str(x.dtype))
@@ -509,37 +569,58 @@ class DataTable:
 
         print (" in handleOneCol ... ", json.dumps(xConfig,indent=4) )
 
+        # eliminate blank strings no matter what ...
+        x = x.apply ( stripBlanks )
+
         # stripPrefix
         if ( "stripPrefix" in xConfig ):
             p = xConfig["stripPrefix"]
-            print ("     --> prefix string : <%s> " % p )
-            print ("     --> calling x.apply ... " )
+            ## print ("     --> prefix string : <%s> " % p )
+            ## print ("     --> calling x.apply ... " )
             x = x.apply ( stripPrefixFromStr, args=(p,) )
 
         # stripSuffix
         if ( "stripSuffix" in xConfig ):
             p = xConfig["stripSuffix"]
-            print ("     --> suffix string : <%s> " % p )
-            print ("     --> calling x.apply ... " )
+            ## print ("     --> suffix string : <%s> " % p )
+            ## print ("     --> calling x.apply ... " )
             x = x.apply ( stripSuffixFromStr, args=(p,) )
 
         # reMatch
         if ( "reMatch" in xConfig ):
             r = xConfig["reMatch"]
-            print ("     --> re match string : <%s> " % r )
+            ## print ("     --> re match string : <%s> " % r )
             x = x.apply ( reMatchTest, args=(r,) )
 
         # "built-in" handling for 'standard' Python data types ...
         if ( "pyType" in xConfig ):
             p = xConfig["pyType"]
-            print ("     --> python type : <%s> " % p )
+            ## print ("     --> python type : <%s> " % p )
             x = x.apply ( handleStandardType, args=(p,) )
 
         # "custom" handling for 'unusual' data types ...
         if ( "customType" in xConfig ):
             p = xConfig["customType"]
-            print ("     --> custom type : <%s> " % p )
+            ## print ("     --> custom type : <%s> " % p )
             x = x.apply ( handleCustomType, args=(p,) )
+
+        # other special handling ...
+        if ( "stripString" in xConfig ):
+            if ( xConfig['stripString'] == "True" ):
+                x = x.apply ( quickStrip )
+
+        if ( "string2list" in xConfig ):
+            if ( xConfig['string2list'] == "True" ):
+                x = x.apply ( string2list )
+
+        if ( "allowed" in xConfig ):
+            aList = xConfig['allowed']
+            if ( "mappings" in xConfig ):
+                mDict = xConfig['mappings']
+            else:
+                mDict = {}
+            if ( len(aList) > 0 ):
+                x = x.apply ( enforceAllowed, args=(aList,mDict,) )
 
         try:
             print ("         --> returning ", x[0], x[-1] )
@@ -562,7 +643,7 @@ class DataTable:
             print (" --> StopIteration exception: end of iteration")
             return ( False )
         except:
-            print (" other error ???")
+            print (" UHOH other error ???")
             return ( False )
 
 
@@ -615,7 +696,10 @@ class DataTable:
             ## use the collections.Counter to find the unique values and their counts
             ctrData = Counter ( colData.dropna() )
             uniqDict = dict ( ctrData )
+            if ( '' in uniqDict ): del uniqDict['']
+            print ("         uniqDict: ", str(uniqDict)[:188])
             numUniqVals = len(uniqDict)
+            print ("         numUniqVals: ", numUniqVals)
             commonStrings = getMostCommonStrings ( ctrData, 5 ) 
 
             print ("====> ", colName, colType, len(colData), numNull, numNotNull, numUniqVals)
@@ -705,7 +789,7 @@ class DataTable:
 
                 ## let's get a subset of the uniqDict -- only those values that are never repeated:
                 nrDict = uniqDict
-                print ( type(nrDict) )
+                ## print ( type(nrDict) )
                 nrKeys = list(nrDict.keys())
                 nrKeys.sort()
                 for key in nrKeys:
@@ -782,11 +866,50 @@ class DataTable:
                     print ("3 most common values: \n", c3[0], "\n", c3[1], "\n", c3[2], "\n" )
 
 
+    def writeOutChunk(self):
+
+        if ( self.emptyOutput ):
+            self.chunkDf.to_csv ( self.fhOut, index=False, sep=self.outputSep )
+            self.emptyOutput = False
+        else:
+            self.chunkDf.to_csv ( self.fhOut, index=False, sep=self.outputSep, header=False )
+
+    def writeJsonSchema(self):
+
+        ## BigQuery data types = ['string','bytes','integer','float','boolean','record','timestamp']
+
+        ## one row of the JSON schema file should look like this:
+        ## {"name": "_id", "type": "string", "mode": "nullable", "description": "<add description here>"},
+
+        print ( "in writeJsonSchema ... ", self.schemaFile )
+
+        allCols = list ( self.chunkDf.columns )
+
+        with open(self.schemaFile, 'w') as schema_file:
+            schema_file.write('[\n')
+            numF = len(allCols)
+            for iF in range(numF):
+                fName = allCols[iF]
+                print ( fName, self.config[fName] )
+                fType = getFieldType ( self.config[fName] )
+                fDesc = getFieldDescription ( self.config[fName] )
+                oneLine = '    {"name": "' + fName + '", "type": "' + fType \
+                        + '", "mode": "nullable", "description": "' + fDesc \
+                        + '"}'
+                if ( iF < (numF-1) ): oneLine += ','
+                schema_file.write(oneLine+'\n')
+            schema_file.write(']')
+                
+
+
+
 ##----------------------------------------------------------------------------------------------------
 
 def main (args):
 
     myData = DataTable(args.inputFile,args.configFile)
+
+    if ( args.outputFile ): myData.initOutput ( args.outputFile, args.schemaFile )
 
     done = False
     numChunks = 0
@@ -798,13 +921,15 @@ def main (args):
             print (" **  CHUNK #%3d ** " % numChunks)
             print (" ***************** ")
             myData.processChunk()
+            if ( args.outputFile ): myData.writeOutChunk()
         else:
             done = True
 
     print (" ")
     print (" TOTAL number of chunks handled: %d " % numChunks)
 
-    sys.exit(-1)
+    if ( args.schemaFile ): myData.writeJsonSchema()
+
 
 
 ##----------------------------------------------------------------------------------------------------
@@ -818,6 +943,10 @@ if __name__ == '__main__':
                          required=True, dest='inputFile', type=str)
     parser.add_argument ('-c', '--configFileName', action='store', help='input JSON config file', 
                          required=True, dest='configFile', type=str)
+    parser.add_argument ('-o', '--outputFileName', action='store', help='output CSV data file', 
+                         required=False, dest='outputFile', type=str)
+    parser.add_argument ('-s', '--schemaFileName', action='store', help='output JSON schema file', 
+                         required=False, dest='schemaFile', type=str)
     args = parser.parse_args()
 
     main (args)
