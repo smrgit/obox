@@ -95,9 +95,13 @@ def getFieldType ( fConfig ):
     for aKey in fConfig:
         if ( aKey.lower().find("type") > 0 ): 
             if ( fConfig[aKey] == 'boolean' ): return ( 'boolean' )
-            if ( fConfig[aKey] == 'datetime' ): return ( 'timestamp' )
-            if ( fConfig[aKey] == 'genomic_locus' ): return ( 'string' )
             if ( fConfig[aKey] == 'chromosome' ): return ( 'string' )
+            if ( fConfig[aKey] == 'date' ): return ( 'string' )
+            if ( fConfig[aKey] == 'datetime' ): return ( 'timestamp' )
+            if ( fConfig[aKey] == 'float' ): return ( 'float' )
+            if ( fConfig[aKey] == 'genomic_locus' ): return ( 'string' )
+            if ( fConfig[aKey] == 'integer' ): return ( 'integer' )
+            if ( fConfig[aKey] == 'string' ): return ( 'string' )
             print ( "UHOH in getFieldType: what should I do with this ??? ", aKey, fConfig[aKey] )
 
     return ( 'string' )
@@ -198,12 +202,18 @@ def handleStandardType(s,p):
     elif ( p=="datetime" ):
         ##   input: 2018-12-18T15:41:29.554Z
         ##   Python ISO format:  2018-12-18T15:41:29.554000+00:00
+        ##                       2018-12-18T15:41:29+00:00
         try:
             t = dateutil.parser.parse(s.strip())
             ## print (" input: <%s> " % s.strip() )
             ## print (" ISO format: ", t.isoformat() )
-            u = str(t.isoformat() )[:23] + 'Z'
-            ## print (" --> <%s> " % u )
+            u = str(t.isoformat() )[:23] 
+
+            ## the ISO format apparently is a little bit different if
+            ## the fractional part of the seconds is zero
+            if ( u.endswith('+00:') ): u = u[:-4]
+
+            ## print (" --> returning DATETIME <%s> " % u )
             return (u)
         except:
             print (" UHOH FAILED to interpret as datetime ??? ", s )
@@ -213,12 +223,13 @@ def handleStandardType(s,p):
             t = dateutil.parser.parse(s.strip())
             ## print (" input: <%s> " % s.strip() )
             ## print (" ISO format: ", t.isoformat() )
+            ## keep just the first 10 characters: YYYY-MM-DD
             u = str(t.isoformat() )[:10] 
-            ## print (" --> <%s> " % u )
+            ## print (" --> returning DATE <%s> " % u )
             return (u)
         except:
             if ( s == "00/00/0000" ): return ('')
-            print (" UHOH FAILED to interpret as date ??? ", s )
+            ## print (" UHOH FAILED to interpret as date ??? ", s )
 
     elif ( p=="integer" ):
         try:
@@ -381,6 +392,7 @@ def reMatchTest(s,r):
 def enforceAllowed(s,aList,mDict):
 
     if ( str(s) == 'nan' ): return ('')
+    if ( s == '' ): return ('') 
     ## print (" in enforceAllowed ... ", aList, mDict)
 
     for m in mDict:
