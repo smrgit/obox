@@ -1,11 +1,7 @@
-
+#### #!/usr/bin/python3
 
 """
     Generic CSV / data parsing code.
-
-    TODO: add a safe_execute utility?
-          https://stackoverflow.com/questions/36671077/one-line-exception-handling/36671208
-
 """
 
 __author__ = "Sheila M Reynolds"
@@ -28,12 +24,18 @@ from collections import Counter
 
 import dateutil
 import pandas as pd
+
+from Bio.SeqUtils import seq3
+from biothings_client import get_client
 from bs4 import BeautifulSoup as bs
 
 # ----------------------------------------------------------------------------------------------------
 
 # BeautifulSoup issues a stern warning if the input text looks like a URL, but I don't care...
 warnings.filterwarnings("ignore", category=UserWarning, module='bs4')
+
+gene_client = get_client('gene')
+geneSymbolPattern = re.compile("[A-Z0-9]+")
 
 # ----------------------------------------------------------------------------------------------------
 
@@ -293,9 +295,6 @@ def handleStandardType(s, p):
         sys.exit(-1)
 
 # ----------------------------------------------------------------------------------------------------
-# TODO: add custom 'types' for the g.* c.* and p.* notation
-# also the ability to map single-letter amino acid abbreviations to 3-letter abbrev's
-
 
 def handleCustomType(s, p):
 
@@ -463,8 +462,9 @@ def enforceAllowed(s, aList, mDict):
     print(" UHOH failed to match to allowed strings !!! ", s, aList)
     sys.exit(-1)
 
-# ----------------------------------------------------------------------------------------------------
-
+##----------------------------------------------------------------------------------------------------
+## this function takes a string that may have line-delimiters and returns it as a list
+## of strings split by line ...
 
 def string2list(s):
 
@@ -473,8 +473,12 @@ def string2list(s):
     if (s == ''):
         return ('')
 
-    ## print (" in string2list ... ")
-    ## print (" >>> %s <<< " % s )
+    print (" in string2list ... ")
+    print (" >>> %s <<< " % s )
+
+    ## total hack to fix a really messed up input string
+    if ( s == "MET c.3029C>T: p.T1010IMET c.3029C>T: p.T1010I" ):
+        s = "MET c.3029C>T: p.T1010I"
 
     sList = []
     for u in s.splitlines():
@@ -485,11 +489,535 @@ def string2list(s):
     if (len(sList) < 1):
         return ('')
 
-    ## print ("     --> returning : ", len(sList), str(sList) )
-    return (str(sList))
+    print ("     --> returning from string2list : ", len(sList), str(sList) )
+    return ( str(sList) )
 
-# ----------------------------------------------------------------------------------------------------
+##----------------------------------------------------------------------------------------------------
 
+def uniqueStringsFromX ( x ):
+
+    if ( x is None ): return ( x )
+    try:
+        if ( len(x) == 0 ): return ( x )
+    except:
+        return ( x )
+
+    ## print ( " XXXX ... ", x )
+
+    if ( isinstance(x,list) ):
+        nx = []
+        for a in x:
+            if len(a) == 0: continue
+            ## print ( type(a), a )
+            if ( isinstance(a,tuple) or isinstance(a,list) ):
+                for b in a:
+                    if len(b) == 0: continue
+                    if b not in nx: nx += [ b ]
+            else:
+                if a not in nx: nx += [ a ]
+        ## print ( " --> returning : ", nx )
+        return ( nx )
+    else:
+        print ( " XXXX ... need to handle something that is not a list ??? " )
+        print ( type(x) )
+        print ( x )
+        sys.exit(-1)
+
+    return ( x )
+
+##----------------------------------------------------------------------------------------------------
+
+def handleKnownTerms ( s ):
+
+    knownTerms = { 'amplification':-1, 'splice site':-1, 'promoter':-1, 'fusion':-1, \
+                   'germline':-1, 'exon':-1, 'pathogenic':-1, \
+                   'likely_pathogenic':-1, 'likely pathogenic':-1, \
+                   'unknown_significance':-1, 'unknown significance':-1, \
+                   'tumor mutational burden':-1, 'TMB':-1, \
+                   'microsatellite instability':-1, 'microsatellite':-1, 'MSI':-1 }
+
+    lowerTerms = [x.lower() for x in list ( knownTerms.keys() )]
+
+    ## first, we just need to "find" all the known terms ... 
+    ## note that we are assuming that each known terms only appears ONCE
+    nn = 0
+    ix = []
+    for k in knownTerms:
+        knownTerms[k] = s.lower().find(k.lower())
+        if ( knownTerms[k] >= 0 ):
+            print ( " term %s FOUND at %d ... " % ( k, knownTerms[k] ), s )
+            nn += 1
+            ix += [ knownTerms[k], knownTerms[k]+len(k) ]
+
+    ## if we did NOT find any of these terms, we're done!
+    if ( nn == 0 ): return ( [s] )
+
+    ## otherwise, we need to do some more customized string-handling ...
+    print ( " %d terms found in one alteration string " % nn )
+
+    ## now let's figure out where we have to split this string ...
+    ix = list(set(ix))
+    ix.sort()
+    print ( " split points : ", len(ix), ix )
+
+    logString = "substrings after splitting : "
+    ss = [''] * (len(ix)+1)
+    print ( ss )
+    for js in range(len(ix)+1):
+        print ( js, ix, s, ss )
+        if ( js == 0 ):
+            ss[js] = s[:ix[js]].strip()
+        elif ( js == len(ix) ):
+            ss[js] = s[ix[js-1]:].strip()
+        else:
+            ss[js] = s[ix[js-1]:ix[js]].strip()
+        logString += " <%s> " % ss[js]
+
+    print ( logString )
+    
+    ## make sure that we don't have any blank substrings ...
+    ## also strip off special characters at the start or end of substrings
+    ## and split strings at ':' and ' ' unless they match a 'known term'
+    ## ( yeah, I know this is hideous )
+
+    us = []
+    for u in ss:
+        if ( len(u) == 0 ): continue
+        if ( u[0] in [':','-'] ):
+            u = u[1:].strip()
+        if ( len(u) == 0 ): continue
+        if ( u[-1] in [':','-'] ):
+            u = u[:-1].strip()
+        if ( len(u) == 0 ): continue
+        v = u.split(':')
+        for w in v:
+            if ( w.lower() not in knownTerms and w[0]!='(' and w[-1]!=')' ):
+                z = w.split(' ')
+                for y in z:
+                    if ( len(y) == 0 ): continue
+                    if ( y not in us ): us += [ y ]
+            else:
+                if ( len(w) == 0 ): continue
+                if ( w not in us ): us += [ w ]
+    print ( " --> unique substrings : ", us )
+
+    ## next up, there are 3 known terms that require special handling:
+    ##     exon
+    ##     microsatellite
+    ##     tumor mutational burden
+
+    for js in range(len(us)):
+        u = us[js]
+        if ( u.lower() == 'exon' ):
+            print ( js, u )
+            ns = us[js] + '=' + us[js+1]
+            print ( ns )
+            us.remove(us[js])
+            us.remove(us[js])
+            print ( us )
+            us = us[:js] + [ns] + us[js:]
+            print ( " --> after handling exon : ", us )
+            break
+
+    for js in range(len(us)):
+        u = us[js]
+        if ( u.lower() == 'microsatellite' ):
+            if ( us[js+1].lower() == 'instability' ): us.remove(us[js+1])
+            ns = 'MSI=' + us[js+1]
+            us.remove(us[js])
+            us.remove(us[js])
+            us = us[:js] + [ns] + us[js:]
+            print ( " --> after handling MSI : ", us )
+            break
+
+    for js in range(len(us)):
+        u = us[js]
+        if ( u.lower() == 'msi' ):
+            if ( us[js+1].lower() == 'instability' ): us.remove(us[js+1])
+            ns = 'MSI=' + us[js+1]
+            us.remove(us[js])
+            us.remove(us[js])
+            us = us[:js] + [ns] + us[js:]
+            print ( " --> after handling MSI : ", us )
+            break
+
+    for js in range(len(us)):
+        u = us[js]
+        if ( u.lower() == 'tumor mutational burden' ):
+            ns = 'TMB=' + us[js+1]
+            us.remove(us[js])
+            us.remove(us[js])
+            us = us[:js] + [ns] + us[js:]
+            print ( " --> after handling TMB : ", us )
+            break
+
+    for js in range(len(us)):
+        u = us[js]
+        if ( u.lower() == 'tmb' ):
+            ns = 'TMB=' + us[js+1]
+            us.remove(us[js])
+            us.remove(us[js])
+            us = us[:js] + [ns] + us[js:]
+            print ( " --> after handling TMB : ", us )
+            break
+
+    ## we also need to eliminate the blank from strings like 'splice site':
+
+    for js in range(len(us)):
+        u = us[js]
+        if ( u.lower() == 'splice site' ):
+            ns = 'splice_site'
+            us = us[:js] + [ns] + us[js+1:]
+            print ( " --> after handling splice site : ", us )
+            break
+
+    for js in range(len(us)):
+        u = us[js]
+        if ( u.lower() == 'likely pathogenic' ):
+            ns = 'likely_pathogenic'
+            us = us[:js] + [ns] + us[js+1:]
+            print ( " --> after handling likely pathogenic : ", us )
+            break
+
+    for js in range(len(us)):
+        u = us[js]
+        if ( u.lower() == 'unknown significance' ):
+            ns = 'unknown_significance'
+            us = us[:js] + [ns] + us[js+1:]
+            print ( " --> after handling unknown significance : ", us )
+            break
+
+    return ( us )
+
+##----------------------------------------------------------------------------------------------------
+
+def handleFreeAlterationText ( u ):
+
+    print ( " ... in handleFreeAlterationText ... ", type(u), len(u), u )
+
+    ## there are a few key words and phrases that we need to look for ...
+    v = handleKnownTerms ( u )
+
+    print ( " ==> first pass produces : ", v )
+
+    ## is there anything else we need to do ??? probably is ...
+    vv = []
+    for w in v:
+        z = uniqueStringsFromX ( re.split('\s|:', w) )
+        vv += z
+
+    print ( " ==> second pass produces : ", vv )
+
+    ## evidently sometimes we get here and the 'c.' and/or the 'p,'
+    ## have been separated from the rest of the HGVS description ...
+    if ( 'c.' in vv ):
+        if ( 1 ):
+            ic = vv.index('c.')
+            print ( "     found 'c.' at %d " % ic, vv )
+            pref = vv[:ic]
+            try:
+                suff = vv[ic+2:]
+            except:
+                suff = []
+            print ( "     ", pref, suff )
+            ns = vv[ic] + vv[ic+1]
+            print ( "     ns = <%s> " % ns )
+            vv = pref + [ns] + suff
+            print ( " FIXED : ", vv )
+        ## except:
+        ##     print ( " FAILED to fix a problem ??? ", vv )
+
+    if ( 'p.' in vv ):
+        if ( 1 ):
+            ic = vv.index('p.')
+            print ( "     found 'p.' at %d " % ic, vv )
+            pref = vv[:ic]
+            try:
+                suff = vv[ic+2:]
+            except:
+                suff = []
+            print ( "     ", pref, suff )
+            ns = vv[ic] + vv[ic+1]
+            print ( "     ns = <%s> " % ns )
+            vv = pref + [ns] + suff
+            print ( " FIXED : ", vv )
+        ## except:
+        ##     print ( " FAILED to fix a problem ??? ", vv )
+
+    return ( vv )
+
+##----------------------------------------------------------------------------------------------------
+
+def findLongestInteger(s):
+
+    ii = len(s)
+    done = False
+    while not done:
+        try:
+            ipos = int(s[:ii])
+            done = True
+            return ( ipos )
+        except:
+            ii -= 1
+            ## print ( " in findLongestInteger ... nothing worked !!! ", s )
+            if ( ii == 0 ): return ( None )
+
+##----------------------------------------------------------------------------------------------------
+
+def validateCodingAlt(w):
+
+    validN = ['A', 'C', 'G', 'T', 'N', '*']
+
+    if ( w.startswith('c.') ):
+        ## validate the rest of this string ...
+        t = w[2:]
+        ipos = findLongestInteger(t)
+        if ( ipos is not None ): 
+            if ( ipos < 0 ): print ( " note ... in validateCodingAlt ... negative position found ... ", ipos, w )
+            if ( ipos == 0 ): 
+                print ( " WHAT ? there is no position 0 !!! ??? ", ipos, w )
+                sys.exit(-1)
+            return (w)
+
+        if ( 1 ):
+            j1 = 0
+            while ( t[j1] in validN ): j1 += 1
+            j1 -= 1
+
+            j2 = len(t)-1
+            while ( t[j2] in validN ): j2 -= 1
+            j2 += 1
+
+            if ( t[j1] in validN and t[j2] in validN ):
+                ipos = findLongestInteger(t[j1+1:])
+                if ( ipos <= 0 ):
+                    print ( " INVALID coding alteration string ??? !!! ", w )
+                    sys.exit(-1)
+                else:
+                    nw = 'c.' + str(ipos) + t[:j1+1] + '>' + t[j2:]
+                    print ( " FIXED: %s --> %s " % ( w, nw ) )
+                    return(nw)
+    else:
+        print ( " INVALID coding alteration string ??? ", w )
+        sys.exit(-1)
+
+
+##----------------------------------------------------------------------------------------------------
+##    alanine       - Ala - A 
+##    cysteine      - Cys - C 
+##    aspartic acid - Asp - D 
+##    glutamic acid - Glu - E 
+##    phenylalanine - Phe - F 
+##    glycine       - Gly - G 
+##    histidine     - His - H 
+##    isoleucine    - Ile - I 
+##    lysine        - Lys - K 
+##    leucine       - Leu - L 
+##    methionine    - Met - M 
+##    asparagine    - Asn - N 
+##    proline       - Pro - P 
+##    glutamine     - Gln - Q 
+##    arginine      - Arg - R 
+##    serine        - Ser - S 
+##    threonine     - Thr - T 
+##    valine        - Val - V 
+##    tryptophan    - Trp - W 
+##    tyrosine      - Tyr - Y 
+##   (termination)  - Ter - *
+
+standard_aa_names = [ "Ala", "Cys", "Asp", "Glu", "Phe", "Gly", "His", "Ile", "Lys", 
+                      "Leu", "Met", "Asn", "Pro", "Gln", "Arg", "Ser", "Thr", "Val", 
+                      "Trp", "Xaa", "Tyr", "Glx", "Ter" ] 
+
+aa1 = "ACDEFGHIKLMNPQRSTVWXYZ*" 
+aa3 = standard_aa_names 
+aa3_upper = [x.upper() for x in standard_aa_names]
+
+special_terms = [ "del", "dup", "fsTer", "fs", "ins", "delins" ]
+
+def threeLetterAAs(s):
+
+    ## only attempt to edit this string if it starts with p.
+    if ( not s.startswith('p.') ): return(s)
+
+    os = s
+    if ( s.startswith('p.(') and s.endswith(')') ): 
+        inParens = True
+        s = s[3:-1]
+    else:
+        inParens = False
+        s = s[2:]
+
+    print ( " 3AA : in threeLetterAAs ... <%s> " % os )
+
+    ii = 0
+    done = False
+    while not done:
+
+        ## first lets make sure we're not starting with one 
+        ## of the 'special' terms ...
+        for x in special_terms:
+            if ( s[ii:].startswith(x) ): 
+                ii += len(x)
+                continue
+        if ( ii >= len(s) ): 
+            done = True
+            break
+
+        ## next we grab the next 3 letters and see if they are in aa3_upper
+        t = s[ii:min(ii+3,len(s))]
+        ## print ( ii, done, t, s )
+        if ( t.upper() in aa3_upper ): 
+            ## print ( "     --> %s is a valid 3-letter abbreviation " % t )
+            ii += 3
+
+        ## if they are not, they try for a single-character match ...
+        else:
+            if ( s[ii] in aa1 ):
+                ## print ( "     --> %s is a valid 1-letter abbreviation " % s[ii] )
+                ns = standard_aa_names[aa1.find(s[ii])]
+                ## print ( "     --> subbing in %s for %s " % ( ns, s[ii] ) )
+                s = s[:ii] + ns + s[ii+1:]
+                ## print ( "     --> got : ", s )
+                ii += 3
+            ## sometimes it seems like 'x' is used instead of 'X'
+            ## so we'll allow it ...
+            elif ( s[ii] == 'x' ):
+                ns = standard_aa_names[aa1.find('X')]
+                s = s[:ii] + ns + s[ii+1:]
+                ii += 3
+            else:
+                ii += 1
+        if ( ii >= len(s) ): done = True
+
+    ## final check because I saw something weird ...
+    okFlag = True
+    if ( s[-3:] not in standard_aa_names ):
+        if ( s[-3:] not in special_terms ):
+            if ( s[-2:] not in special_terms ):
+                if ( s != 'Met1?' and s != '?' ):
+                    okFlag = False
+                    iTer = s.find('fsTer')
+                    if ( iTer >= 0 ):
+                        try:
+                            print ( iTer, s[iTer+5:], s )
+                            jTer = int ( s[iTer+5:] )
+                            okFlag = True
+                        except:
+                            okFlag = False
+
+    ## one last hack-y test ...
+    if ( not okFlag ):
+        if ( s[-4:-1] in standard_aa_names ): s = s[:-1]
+        okFlag = True
+
+    if ( not okFlag ): print ( " THIS LOOKS WRONG ???   <%s> " % s )
+
+    if ( inParens ):
+        s = 'p.(' + s + ')'
+    else:
+        s = 'p.' + s
+
+    print ( "               returning ... <%s> " % s )
+    return(s)
+
+##----------------------------------------------------------------------------------------------------
+
+def checkHGVS(s):
+
+    if ( str(s) == 'nan' ): return ('')
+    if ( s == '' ): return ('')
+
+    print ( "\n\n" )
+    print ( "===> in checkHGVS function !!! ", type(s), s )
+
+    ## first we need to revert from the string representation of a list
+    ## to the underlying list ...
+    if ( len(s) > 16384 ): 
+        print ( "SVGH!   ACK ACK ACK ... string is really really LONG ... ", len(s) )
+        print ( s[:80], "\n", s[-80:], "\n\n" )
+        print ( " --> returning as-is ... " )
+        return (s)
+
+    newS = ''
+
+    t = ast.literal_eval(s)
+    print ( "SVGH!         literal_eval produces: ", type(t), len(t), t )
+    if ( t == ['None'] ): return ( '' )
+
+    for u in t:
+        print ( "SVGH!             looping within t ... ", type(u), u )
+        ## print ( "SVGH! <<<%s>>> " % u )
+        v = handleFreeAlterationText ( u )
+        print ( "SVGH!                 back from splitting u : ", type(v), len(v), v )
+
+        ## now we are going to assemble a dict of information ...
+        print ( "SVGH!             next we want to build up uDict ... " )
+        uDict = {}
+
+        for w in v:
+            print ( "SVGH!                 looping within v ... ", type(w), w )
+            if ( len(w) < 1 ): continue
+            ## print ( "SVGH!         --> ", w, len(w) )
+            gotGene = False
+            if ( geneSymbolPattern.fullmatch(w) ):
+                ## print ( "SVGH!         this looks like a gene symbol !!! " )
+                try:
+                    ## print ( "SVGH! calling gene_client.query !!! " )
+                    r = gene_client.query ( w, species='human', size=1 )
+                    if ( len(r['hits']) == 1 ):
+                        h = r['hits'][0]
+                        print ( "SVGH!     got : ", h )
+                        ### for k in ['symbol', 'entrezgene', 'taxid', 'name' ]:
+                        for k in ['symbol', 'entrezgene' ]:
+                            if k in h: uDict[k] = h[k]
+                        print ( "SVGH!     uDict so far : ", uDict )
+                        gotGene = True
+                    else:
+                        print ( "SVGH! no hit ??? or multiple hits !!! " )
+                        print ( r )
+                except:
+                    print ( "SVGH! error when calling gene_client.query ??? API request FAILED ??? !!! " )
+
+            ## if we were successful in identifying a gene symbol, then 
+            ## there is no need to dig further ...
+            if ( gotGene ): continue
+
+            ## from https://varnomen.hgvs.org/bg-material/refseq/
+            if ( w.startswith('g.') ):
+                uDict['genomic'] = w
+            elif ( w.startswith('m.') ):
+                uDict['mito'] = w
+            elif ( w.startswith('c.') ):
+                uDict['coding'] = validateCodingAlt(w)
+            elif ( w.startswith('n.') ):
+                uDict['non-coding'] = w
+            elif ( w.startswith('r.') ):
+                uDict['rna'] = w
+            elif ( w.startswith('p.') ):
+                uDict['protein'] = threeLetterAAs(w)
+            else:
+                ## seems like we're still getting to this point with what is 
+                ## essentially a meaningless string
+                if ( w == ';' ): continue
+                if ( w == '-' ): continue
+
+                if ( 'other' not in uDict ): uDict['other'] = []
+                uDict['other'] += [ w ]
+                print ( "SVGH! dumping into uDict other catch-all ... ", w )
+                print ( len(re.findall(r'\d+',w)), re.findall(r'\d+',w) )
+                print ( len(re.findall(r'\D+',w)), re.findall(r'\D+',w) )
+                print ( "SVGH! " )
+
+        print ( "SVGH! built up uDict : ", uDict )
+        newS += str(uDict)
+
+    ## final string to be returned ...
+    print ( " FINAL HGVS-parsed & re-built string : ", len(newS), newS )
+
+    return ( newS )
+
+##----------------------------------------------------------------------------------------------------
 
 def quickStrip(s):
 
@@ -602,10 +1130,12 @@ class DataTable:
             ## print (" Trying to read input CSV from <%s> " % dataFileName)
             ## self.df = pd.read_csv(dataFileName, low_memory=False, skipinitialspace=True, keep_default_na=True, na_values=['[]','{}','na',':'])
 
-            print(" getting csv iterator ... ")
-            self.csvIter = pd.read_csv(dataFileName, dtype=str, low_memory=False, iterator=True,
-                                       skipinitialspace=True, keep_default_na=True,
-                                       na_values=['[]', '{}', 'na', ':', '::', 'EditMe', 'Please edit me'])
+            print (" getting csv iterator ... ")
+            self.csvIter = pd.read_csv(dataFileName, dtype=str, low_memory=False, iterator=True, 
+                                       skipinitialspace=True, keep_default_na=True, 
+                                       na_values=['[]','{}','na','NA',':','::','[""]',"['']",
+                                                  'EditMe','Please edit me',
+                                                  'None.','None found','Not determined','Unknown.'])
             logging.info(' --> got CSV file iterator')
 
         except:
@@ -687,9 +1217,12 @@ class DataTable:
             if (xConfig['stripString'] == "True"):
                 x = x.apply(quickStrip)
 
-        if ("string2list" in xConfig):
-            if (xConfig['string2list'] == "True"):
-                x = x.apply(string2list)
+        if ( "string2list" in xConfig ):
+            if ( xConfig['string2list'] == "True" ):
+                x = x.apply ( string2list )
+            if ( "HGVS" in xConfig ):
+                if ( xConfig['HGVS'] == "True" ):
+                    x = x.apply ( checkHGVS )
 
         if ("allowed" in xConfig):
             aList = xConfig['allowed']
