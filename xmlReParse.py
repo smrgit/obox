@@ -69,8 +69,13 @@ def quickStrip(s):
 def handleNodeData(node,gpID,pID):
 
     if ( len(node.attrib) > 0 ):
+
         ## print ( " found attributes : ", ithGen, node.tag, len(node.attrib), node.attrib )
         ## need to handle the attributes:
+
+        ## NB (!!!) attributes need to have their own 'bundle' identifier that is separate
+        ## from the other 'contents' of this node...
+        aID = uuid.uuid4()
         for a in node.attrib:
 
             qs = quickStrip(str(node.attrib[a]))
@@ -83,7 +88,7 @@ def handleNodeData(node,gpID,pID):
                 longLabel += node.tag + ' > ' + a 
 
                 outString = inputFilename + '\t' + str(ithGen) + '\t' \
-                          + str(gpID) + '\t' + str(pID) + '\t' \
+                          + str(pID) + '\t' + str(aID) + '\t' \
                           + longLabel + '\t' \
                           + node.tag + '\t' \
                           + a + '\t' + qs 
@@ -162,14 +167,12 @@ def main(args):
         outString = 'inputXMLfile\txmlDepth\tparentID\tbundleID\tfull_label\tparent_label\telement_label\telement_text'
         outFh.write ( "%s\n" % outString )
 
-    ## import the data from the XML file ...
-    ## latin-1 ? utf8 ?
-    ### try:
+    try:
         xmlp = ET.XMLParser(encoding="latin-1")
         tree = ET.parse(inputFilename,parser=xmlp)
-    ### except:
-    ###    print ( " FAILED to parse input XML file ??? <%s> " % inputFilename )
-    ###    sys.exit(-1)
+    except:
+        print ( " FAILED to parse input XML file ??? <%s> " % inputFilename )
+        sys.exit(-1)
     
     ## get the root of the tree
     root = tree.getroot()
