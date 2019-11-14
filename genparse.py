@@ -11,6 +11,7 @@ __status__ = "Prototype"
 import argparse
 import ast
 import csv
+import datetime
 import distutils.util as util
 import json
 import logging
@@ -160,12 +161,11 @@ def isHexBlob(s):
 
 def stripBlanks(s):
 
-    if (str(s) == 'nan'):
-        return ('')
-    if (not isinstance(s, str)):
-        return (s)
+    if (str(s) == 'nan'): return ('')
+    if (s == ''): return ('')
+    if (not isinstance(s, str)): return (s)
 
-    return (s.strip())
+    return (s.strip().strip(u'\u200b'))
 
 # ----------------------------------------------------------------------------------------------------
 # strip the specified prefix (if present) from the input string ...
@@ -205,6 +205,38 @@ def stripSuffixFromStr(s, p):
     return (s)
 
 # ----------------------------------------------------------------------------------------------------
+
+def hackDate(s):
+
+    if ( s == "00/00/00" ): return ( s )
+    if ( s == "00/00/0000" ): return ( s )
+
+    today = datetime.date.today()
+    nowYear = int ( today.timetuple()[0] )
+
+    i1 = s.find('/')
+    if ( i1 > 0 ):
+        i2 = s.find('/',i1+1)
+        ## print ( s, i1, i2 )
+        if ( i2 > i1 ):
+            iYear = int ( s[i2+1:] )
+            if ( iYear == 0 ):
+                print ( " UHOH year 0 ??? ", s )
+                return ( s )
+            elif ( iYear < 100 ):
+                iYear += 2000
+                if ( iYear > nowYear ): iYear -= 100
+                ns = s[:i2+1] + str(iYear)
+                ## print ( " --> returning <%s> " % ns )
+                return ( ns )
+            elif ( iYear >= 1850 ):
+                return ( s )
+
+    print ( " UHOH ... did something go wrong in hackDate ??? <%s> " % s )
+    print ( i1, i2 )
+    sys.exit(-1)
+
+# ----------------------------------------------------------------------------------------------------
 # handle the 'standard' types ...
 
 
@@ -225,15 +257,14 @@ def handleStandardType(s, p):
         return (s)
 
     if (p == "boolean"):
-        # try:
-        if (1):
+        try:
             ## print (" input: <%s> " % s.strip().lower() )
             t = str(bool(util.strtobool(s.strip().lower())))
             ## print (" got back ", t )
             return (t)
-        # except:
-        ##     print (" FAILED TO interpret/cast to boolean ??? <%s> " % s.strip().lower() )
-        # sys.exit(-1)
+        except:
+            print (" UHOH -- FAILED TO interpret/cast to boolean ??? <%s> " % s.strip().lower() )
+            sys.exit(-1)
 
     elif (p == "datetime"):
         # input: 2018-12-18T15:41:29.554Z
@@ -256,18 +287,20 @@ def handleStandardType(s, p):
             print(" UHOH FAILED to interpret as datetime ??? ", s)
 
     elif (p == "date"):
+        ## KNOWN BUG: if the input date is like 06/18/15
+        ## there isn't any real way to know whether this should be 2015 or 1915 ...
+        if ( s.find('/') > 0 ): s = hackDate(s)
         try:
             t = dateutil.parser.parse(s.strip())
             ## print (" input: <%s> " % s.strip() )
             ## print (" ISO format: ", t.isoformat() )
             # keep just the first 10 characters: YYYY-MM-DD
             u = str(t.isoformat())[:10]
-            ## print (" --> returning DATE <%s> " % u )
+            print (" --> returning DATE <%s> (derived from input string %s) " % ( u, s ) )
             return (u)
         except:
-            if (s == "00/00/0000"):
-                return ('')
-            ## print (" UHOH FAILED to interpret as date ??? ", s )
+            if (s == "00/00/0000"): return ('')
+            print (" UHOH FAILED to interpret as date ??? ", s )
 
     elif (p == "integer"):
         try:
@@ -482,7 +515,7 @@ def string2list(s):
 
     sList = []
     for u in s.splitlines():
-        u = u.strip()
+        u = stripBlanks(u)
         if (len(u) > 0):
             sList += [u]
 
@@ -530,8 +563,19 @@ def uniqueStringsFromX ( x ):
 def handleKnownTerms ( s ):
 
     knownTerms = { 'amplification':-1, 'splice site':-1, 'promoter':-1, 'fusion':-1, \
-                   'germline':-1, 'exon':-1, 'pathogenic':-1, \
+                   'no clinvar entry for this variant':-1, \
+                   'no clinvar entry':-1, 'clinvar reports as':-1, \
+                   'no database entries for this variant':-1, \
+                   'not expected in this sample':-1, \
+                   'expected in this sample':-1, \
+                   'low level variant with no cosmic or dbsnp entries':-1, \
+                   'see previous analysis':-1, \
+                   '(clinically relevant)':-1, \
+                   'clinically relevant':-1, \
+                   'germline':-1, 'exon':-1, \
+                   'likely benign':-1, \
                    'likely_pathogenic':-1, 'likely pathogenic':-1, \
+                   'pathogenic':-1, \
                    'unknown_significance':-1, 'unknown significance':-1, \
                    'tumor mutational burden':-1, 'TMB':-1, \
                    'microsatellite instability':-1, 'microsatellite':-1, 'MSI':-1 }
@@ -540,9 +584,24 @@ def handleKnownTerms ( s ):
 
     ## first, we just need to "find" all the known terms ... 
     ## note that we are assuming that each known terms only appears ONCE
+    ## 12nov2019: we need to find and remove the string(s), so that any of their
+    ##            substrings don't also wind up getting 'found' ...
+
+    foundTerms = []
+    nn = 0
+    t = s
+    for k in knownTerms:
+        knownTerms[k] = t.lower().find(k.lower())
+        if ( knownTerms[k] >= 0 ):
+            foundTerms += [k]
+            tt = t[:knownTerms[k]] + t[knownTerms[k]+len(k):]
+            t = tt
+            nn += 1
+    print ( " --> found %d terms ... " % nn, foundTerms )
+
     nn = 0
     ix = []
-    for k in knownTerms:
+    for k in foundTerms:
         knownTerms[k] = s.lower().find(k.lower())
         if ( knownTerms[k] >= 0 ):
             print ( " term %s FOUND at %d ... " % ( k, knownTerms[k] ), s )
@@ -566,11 +625,11 @@ def handleKnownTerms ( s ):
     for js in range(len(ix)+1):
         print ( js, ix, s, ss )
         if ( js == 0 ):
-            ss[js] = s[:ix[js]].strip()
+            ss[js] = stripBlanks ( s[:ix[js]] )
         elif ( js == len(ix) ):
-            ss[js] = s[ix[js-1]:].strip()
+            ss[js] = stripBlanks ( s[ix[js-1]:] )
         else:
-            ss[js] = s[ix[js-1]:ix[js]].strip()
+            ss[js] = stripBlanks ( s[ix[js-1]:ix[js]] )
         logString += " <%s> " % ss[js]
 
     print ( logString )
@@ -584,10 +643,10 @@ def handleKnownTerms ( s ):
     for u in ss:
         if ( len(u) == 0 ): continue
         if ( u[0] in [':','-'] ):
-            u = u[1:].strip()
+            u = stripBlanks ( u[1:] )
         if ( len(u) == 0 ): continue
         if ( u[-1] in [':','-'] ):
-            u = u[:-1].strip()
+            u = stripBlanks ( u[:-1] )
         if ( len(u) == 0 ): continue
         v = u.split(':')
         for w in v:
@@ -691,19 +750,135 @@ def handleKnownTerms ( s ):
 
 ##----------------------------------------------------------------------------------------------------
 
+def noCommonWords ( s ):
+
+    cw = ['the', 'but', 'not', 'was', 'is', 'be', 'may', 'in', 'it', 'be', 'at', \
+          'of', 'from', 'with', 'only', 'like' ]
+
+    print ( " checking for common words ... <%s> " % s )
+
+    t = s.lower()
+    for w in cw:
+        iw = t.find(w)
+        if ( iw == 0 ): 
+            try:
+                if ( t[len(w)]==' ' ): 
+                    print ( "     FOUND CW ", iw, w )
+                    return ( False )
+            except:
+                pass
+        if ( iw > 0 ):
+            try:
+                if ( t[iw-1]==' ' ):
+                    if ( t[iw+len(w)]==' ' ):
+                        print ( "     FOUND CW ", iw, w )
+                        return ( False )
+            except:
+                pass
+
+    print ( "     NO CW FOUND " )
+    return ( True )
+
+##----------------------------------------------------------------------------------------------------
+
+def lookForHGVSabbrevs ( s ):
+
+    if ( s == '' ): return ( False )
+
+    abbrevs = ['c.', 'g.', 'r.', 'p.', 'm.', 'n.']
+
+    t = s
+    ## but not inside parenthetical statements ...
+    while ( t.find ('(') >= 0 ):
+        i1 = t.find('(')
+        i2 = t.find(')', i1)
+        if ( i2 > i1 ):
+            t = t[:i1] + t[i2+1:]
+        else:
+            t = t[:i1]
+
+    if ( t == '' ): return ( False )
+
+    ## also remove a final '.'
+    if ( t[-1] == '.' ): t = t[:-1]
+
+    for a in abbrevs:
+        skipFlag = False
+        ia = t.find(a)
+        if ( ia >= 0 ):
+            ## is there another lower-case letter preceding this?
+            ja = ia - 1
+            if ( ja >= 0 ):
+                ka = ord(t[ja])
+                print ( ja, t, t[ja], ka )
+                if ( ka >= 97 and ka <= 122 ):
+                    skipFlag = True
+
+            if ( not skipFlag ): return ( True )
+
+    return ( False )
+
+##----------------------------------------------------------------------------------------------------
+
+def removeCertainBlanks ( u ):
+
+    if ( u == '' ): return ( '' )
+
+    d = [' =', '= ', ' :', ': ']
+    t = u
+    for e in d:
+        print ( " e = <%s> " % e )
+        while ( t.find(e) >= 0 ):
+            ii = t.find(e)
+            print ( "     ii = %d " % ii )
+            try:
+                if ( t[ii] == ' ' ): t = t[:ii] + t[ii+1:]
+            except:
+                continue
+            try:
+                if ( t[ii+1] == ' ' ): t = t[:ii+1] + t[ii+2:]
+            except:
+                continue
+
+    if ( t == '' ): return ( '' )
+    if ( t[0] in ['=',':'] ):
+        t = t[1:]
+
+    if ( t == '' ): return ( '' )
+    if ( t[-1] in ['=',':'] ):
+        t = t[:-1]
+
+    t = stripBlanks ( t )
+    return ( t )
+
+##----------------------------------------------------------------------------------------------------
+## example:
+##     we start with:                 ASXL1 c.2083C>T: p.Q695X
+##     after "first pass" we have:  ['ASXL1 c.2083C>T: p.Q695X']
+##     after "second pass" we have: ['ASXL1', 'c.2083C>T', 'p.Q695X']
+
 def handleFreeAlterationText ( u ):
 
     print ( " ... in handleFreeAlterationText ... ", type(u), len(u), u )
 
-    ## there are a few key words and phrases that we need to look for ...
-    v = handleKnownTerms ( u )
+    u = removeCertainBlanks ( u )
 
+    ## there are a few key words and phrases that we need to look for ...
+    ## but maybe only when there is something like a coding- or protein-variant ???
+    if ( lookForHGVSabbrevs(u) and noCommonWords(u) ):
+        v = handleKnownTerms ( u )
+    else:
+        print ( " skipping the handleKnownTerms part ... " )
+        v = [ u ]
     print ( " ==> first pass produces : ", v )
 
     ## is there anything else we need to do ??? probably is ...
     vv = []
     for w in v:
-        z = uniqueStringsFromX ( re.split('\s|:', w) )
+        if ( lookForHGVSabbrevs(w) and noCommonWords(w) ):
+            z = uniqueStringsFromX ( re.split('\s|:', w) )
+        else:
+            z = [ w ]
         vv += z
 
     print ( " ==> second pass produces : ", vv )
@@ -720,7 +895,13 @@ def handleFreeAlterationText ( u ):
             except:
                 suff = []
             print ( "     ", pref, suff )
-            ns = vv[ic] + vv[ic+1]
+            try:
+                if ( vv[ic+1][0] in [ '*', 'A', 'C', 'G', 'T', '-', '1', '2', '3', '4', '5', '6', '7', '8', '9' ] ):
+                    ns = vv[ic] + vv[ic+1]
+                else:
+                    ns = vv[ic+1]
+            except:
+                ns = ''
             print ( "     ns = <%s> " % ns )
             vv = pref + [ns] + suff
             print ( " FIXED : ", vv )
@@ -731,16 +912,26 @@ def handleFreeAlterationText ( u ):
         if ( 1 ):
             ic = vv.index('p.')
             print ( "     found 'p.' at %d " % ic, vv )
-            pref = vv[:ic]
-            try:
-                suff = vv[ic+2:]
-            except:
-                suff = []
-            print ( "     ", pref, suff )
-            ns = vv[ic] + vv[ic+1]
-            print ( "     ns = <%s> " % ns )
-            vv = pref + [ns] + suff
-            print ( " FIXED : ", vv )
+            if ( ic == len(vv)-1 ):
+                print ( "          but it's at the end, so ditching ... " )
+                vv = vv[:-1]
+            else:
+                pref = vv[:ic]
+                try:
+                    suff = vv[ic+2:]
+                except:
+                    suff = []
+                print ( "     ", pref, suff )
+                try:
+                    if ( ord(vv[ic+1][0])>=65 and ord(vv[ic+1][0])<=90 ):
+                        ns = vv[ic] + vv[ic+1]
+                    else:
+                        ns = vv[ic+1]
+                except:
+                    ns = ''
+                print ( "     ns = <%s> " % ns )
+                vv = pref + [ns] + suff
+                print ( " FIXED : ", vv )
         ## except:
         ##     print ( " FAILED to fix a problem ??? ", vv )
 
@@ -749,6 +940,10 @@ def handleFreeAlterationText ( u ):
 ##----------------------------------------------------------------------------------------------------
 
 def findLongestInteger(s):
+
+    if ( s[0] == '*' ):
+        print ( " in findLongestInteger ... ignoring leading * ... " )
+        s = s[1:]
 
     ii = len(s)
     done = False
@@ -763,15 +958,109 @@ def findLongestInteger(s):
             if ( ii == 0 ): return ( None )
 
 ##----------------------------------------------------------------------------------------------------
+## one problematic example seems to be c.GG34_35TT
+
+def handleRefPosVar ( s ):
+
+    ## not really sure if * should be considered a valid nucleotide ... ???
+    validN = ['A', 'C', 'G', 'T', 'N', '*']
+
+    try:
+        j1 = 0
+        while ( s[j1] in validN ): j1 += 1
+        j2 = len(s) - 1
+        while ( s[j2] in validN ): j2 -= 1
+
+        print ( s, j1, j2 )
+        ref = s[:j1]
+        pstr = s[j1:j2+1]
+        var = s[j2+1:]
+        print ( " in handlRefPosVar ... ", ref, pstr, var )
+
+    except:
+        return ( s )
+
+    try:
+        ipos = int ( pstr )
+        print ( "     --> integer position : ", ipos )
+    except:
+        print ( " UHOH ... first attempt at getting integer position failed ??? ", pstr )
+        try:
+            ipos = int ( pstr[:-1] )
+            print ( "     --> second attempt: ", ipos )
+        except:
+            print ( " UHOH ... still not working in handlRefPosVar ??? ", pstr )
+            if ( pstr.find('_') > 0 ):
+                print ( "     ... AAAAAH ... need to deal with underscore too ... " )
+            sys.exit(-1)
+
+    return ( 'c.' + str(ipos) + ref + '>' + var )
+
+##----------------------------------------------------------------------------------------------------
 
 def validateCodingAlt(w):
 
+    ## 12nov2019: this function was bombing on c.*2336_*2339del  ... FIXED
+
+    ## not really sure if * should be considered a valid nucleotide ... ???
     validN = ['A', 'C', 'G', 'T', 'N', '*']
+    validD = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '*']
+
+    origW = w
 
     if ( w.startswith('c.') ):
         ## validate the rest of this string ...
+        print ( " validating coding alteration ... <%s> " % w )
+
+        ## very hacky, but seeing this kind of string:
+        ##         c.[146_153del; c.172_175del]:
+        ## getting split into:
+        ##         c.[146_153del;
+        ##     and c.172_175del]:
+        ## or similar :(
+        yucky = ['[', ']', ';', ':' ]
+        for y in yucky:
+            iy = w.find(y)
+            if ( iy == 0 ):
+                w = w[1:]
+            elif ( iy > 0 ):
+                w = w[:iy] + w[iy+1:]
+        if ( w != origW ): 
+            print ( "     un-yucked ... <%s> to <%s> " % ( origW, w ) )
+            ## sys.exit(-1)
+
+        ## 't' substring starts after the 'c.' prefix
         t = w[2:]
+
+        ## we are expecting something like c.694C>T but sometimes get instead c.C694T
+        ## or even c.GG1044>TT 
+        ## or c.*2321A>G
+        if ( t[0] not in validD ):
+            print ( " NBNB!!! non-standard coding alteration string ??? <%s> " % w )
+            nw = handleRefPosVar ( t )
+            print ( " --> got back %s from handleRefPosVar " % nw )
+            return ( nw )
+
+        hasUnderscore = False
+        if ( w.find('_') >= 0 ):
+            ## one problematic example seems to be c.GG34_35TT
+            hasUnderscore = True
+            print ( " NBNB!!! coding alteration string has UNDERSCORE !!! %s " % w )
+
+            iu = w.find('_')
+            wp1 = w[2:iu]
+            wp2 = w[iu+1:]
+            print ( "     two parts : %s and %s " % ( wp1, wp2 ) )
+            ipos1 = findLongestInteger(wp1)
+            ipos2 = findLongestInteger(wp2)
+            if ( ipos1 is not None and ipos2 is not None ):
+                return ( w )
+            else:
+                print ( " UHOH ??? still some kind of problem ??? %s " % w )
+            sys.exit(-1)
+
         ipos = findLongestInteger(t)
+        print ( "     --> got back longest integer %d " % ipos )
         if ( ipos is not None ): 
             if ( ipos < 0 ): print ( " note ... in validateCodingAlt ... negative position found ... ", ipos, w )
             if ( ipos == 0 ): 
@@ -911,7 +1200,7 @@ def threeLetterAAs(s):
         if ( s[-4:-1] in standard_aa_names ): s = s[:-1]
         okFlag = True
 
-    if ( not okFlag ): print ( " THIS LOOKS WRONG ???   <%s> " % s )
+    if ( not okFlag ): print ( " UHOH THIS LOOKS WRONG ???   <%s> " % s )
 
     if ( inParens ):
         s = 'p.(' + s + ')'
@@ -977,7 +1266,7 @@ def checkHGVS(s):
                         print ( "SVGH! no hit ??? or multiple hits !!! " )
                         print ( r )
                 except:
-                    print ( "SVGH! error when calling gene_client.query ??? API request FAILED ??? !!! " )
+                    print ( "SVGH! error when calling gene_client.query ??? UHOH API request FAILED ??? !!! " )
 
             ## if we were successful in identifying a gene symbol, then 
             ## there is no need to dig further ...
@@ -997,17 +1286,16 @@ def checkHGVS(s):
             elif ( w.startswith('p.') ):
                 uDict['protein'] = threeLetterAAs(w)
             else:
-                ## seems like we're still getting to this point with what is 
-                ## essentially a meaningless string
-                if ( w == ';' ): continue
-                if ( w == '-' ): continue
-
-                if ( 'other' not in uDict ): uDict['other'] = []
-                uDict['other'] += [ w ]
-                print ( "SVGH! dumping into uDict other catch-all ... ", w )
-                print ( len(re.findall(r'\d+',w)), re.findall(r'\d+',w) )
-                print ( len(re.findall(r'\D+',w)), re.findall(r'\D+',w) )
-                print ( "SVGH! " )
+                ## there may be other bits of information that we still get here with ...
+                if ( len(w) > 1 ):
+                    if ( 'other' not in uDict ): uDict['other'] = []
+                    uDict['other'] += [ w ]
+                    print ( "SVGH! dumping into uDict other catch-all ... ", len(w), w )
+                else:
+                    print ( "SVGH: ditching this entirely ", len(w), w )
+                ## print ( len(re.findall(r'\d+',w)), re.findall(r'\d+',w) )
+                ## print ( len(re.findall(r'\D+',w)), re.findall(r'\D+',w) )
+                ## print ( "SVGH! " )
 
         print ( "SVGH! built up uDict : ", uDict )
         newS += str(uDict)
