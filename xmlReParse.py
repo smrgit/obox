@@ -52,6 +52,8 @@ def quickStrip(s):
 
     t = t.strip()
 
+    t = cleanTag(t)
+
     if ( t.find(',') >= 0 ): 
 
         if ( t.find('"') >= 0 ): t = t.replace('"',"'")
@@ -120,7 +122,7 @@ def handleNodeData(node,pID,eID):
                 ## write out the 'attrib' contents of this particular node
                 longLabel = ''
                 if ( len(genList) > 0 ): longLabel = ' > '.join(genList) + ' > '
-                longLabel += node.tag + ' > ' + a 
+                longLabel += cleanTag(node.tag) + ' > ' + cleanTag(a) 
                 longLabel = longLabel.strip()
 
                 ## print ( " DDDD :     writing attribute {%s = %s} " % ( longLabel, textString ) )
@@ -128,8 +130,8 @@ def handleNodeData(node,pID,eID):
                 outString = inputFilename + '\t' + str(ithGen) + '\t' \
                           + str(pID) + '\t' + str(eID) + '\t' \
                           + longLabel + '\t' \
-                          + node.tag + '\t' \
-                          + a + '\t' + textString
+                          + cleanTag(node.tag) + '\t' \
+                          + cleanTag(a) + '\t' + textString
 
                 outFh.write ( "%s\n" % outString )
                 outFlag = True
@@ -146,7 +148,7 @@ def handleNodeData(node,pID,eID):
     ## write out the text contents of this particular node
     longLabel = ''
     if ( len(genList) > 0 ): longLabel = ' > '.join(genList) + ' > '
-    longLabel += node.tag 
+    longLabel += cleanTag(node.tag) 
     longLabel = longLabel.strip()
 
     parentLabel = ''
@@ -158,10 +160,33 @@ def handleNodeData(node,pID,eID):
                   + str(pID) + '\t' + str(eID) + '\t' \
                   + longLabel + '\t' \
                   + parentLabel + '\t' \
-                  + node.tag + '\t' + textString
+                  + cleanTag(node.tag) + '\t' + textString
         outFh.write ( "%s\n" % outString )
 
     ## print ( " DDDD : leaving handleNodeData ... " )
+
+# ----------------------------------------------------------------------------------------------------
+
+def cleanTag(s):
+
+    t = s.strip()
+
+    u = t
+    i1 = t.find('{')
+    if ( i1 >= 0 ):
+        i2 = t.find('}')
+        if ( i2 > i1 ):
+            u = t[:i1] + t[i2+1:]
+
+    if ( 0 ):
+        if ( len(u) != len(t) ):
+            print ( " CLEANTAG ... <%s> ... <%s> " % ( t, u ) )
+
+    if ( u == "xsd_vexsd_ver" ):
+        print ( " WAIT UP ... in cleanTag ... <%s> ... <%s> ... <%s> " % ( s, t, u ) )
+        sys.exit(-1)
+
+    return (u)
 
 # ----------------------------------------------------------------------------------------------------
 # inspired by:
@@ -172,7 +197,8 @@ def handleNextLevel(root,pID):
     global ithGen, genList
 
     ithGen += 1
-    genList += [ root.tag.strip() ]
+    genList += [ cleanTag(root.tag) ]
+    ## genList += [ root.tag.strip() ]
 
     ## print ( " RRRR : in handleNextLevel ... ", ithGen, genList )
 
