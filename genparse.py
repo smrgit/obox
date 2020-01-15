@@ -26,14 +26,9 @@ from collections import Counter
 import dateutil
 import pandas as pd
 
-from Bio.SeqUtils import seq3
 from biothings_client import get_client
-from bs4 import BeautifulSoup as bs
 
 # ----------------------------------------------------------------------------------------------------
-
-# BeautifulSoup issues a stern warning if the input text looks like a URL, but I don't care...
-warnings.filterwarnings("ignore", category=UserWarning, module='bs4')
 
 gene_client = get_client('gene')
 geneSymbolPattern = re.compile("[A-Z0-9]+")
@@ -476,20 +471,20 @@ def enforceAllowed(s, aList, mDict):
         return ('')
     if (s == ''):
         return ('')
-    ## print (" in enforceAllowed ... ", aList, mDict)
+    print (" in enforceAllowed ... ", aList, mDict)
 
     for m in mDict:
         b = m.lower()
         t = s.lower()
         if (t == b):
-            ## print ("     --> applying mapping", s, m, mDict[m])
+            print ("     --> applying mapping", s, m, mDict[m])
             s = mDict[m]
 
     for a in aList:
         t = s.lower()
         b = a.lower()
         if (t == b):
-            ## print ("     --> found allowed match ", s, a)
+            print ("     --> found allowed match ", s, a)
             return (s)
 
     print(" UHOH failed to match to allowed strings !!! ", s, aList)
