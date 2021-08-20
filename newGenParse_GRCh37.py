@@ -44,7 +44,8 @@ def localRefSeqDatabase ( s  ):
     if ( len(rspDB) == 0 ):
         print ( " --> opening local Ensembl identifier database files ...  " )
 
-        fh = open ( "/Users/sheila/Data/RefSeq/protein_id.map.tsv2" )
+        ## fh = open ( "/Users/sheila/Data/RefSeq/protein_id.map.tsv2" )
+        fh = open ( "/home/sheila/RefSeq/protein_id.map.tsv2" )
         for aLine in fh:
             aLine = aLine.strip()
             tList = aLine.split()
@@ -55,7 +56,8 @@ def localRefSeqDatabase ( s  ):
             rspDB[protein_id] = gene_symbol
         fh.close()
 
-        fh = open ( "/Users/sheila/Data/RefSeq/transcript_id.map.tsv2" )
+        ## fh = open ( "/Users/sheila/Data/RefSeq/transcript_id.map.tsv2" )
+        fh = open ( "/home/sheila/RefSeq/transcript_id.map.tsv2" )
         for aLine in fh:
             aLine = aLine.strip()
             tList = aLine.split()
@@ -96,7 +98,8 @@ def localEnsemblDatabase ( s ):
     if ( len(ensgDB) == 0 ):
         print ( " --> opening local Ensembl identifier database files ...  " )
 
-        fh = open ( "/Users/sheila/Data/Ensembl/GTF/gene_id.map.tsv" )
+        ## fh = open ( "/Users/sheila/Data/Ensembl/GTF/gene_id.map.tsv" )
+        fh = open ( "/home/sheila/Ensembl/GTF/gene_id.map.tsv" )
         for aLine in fh:
             aLine = aLine.strip()
             tList = aLine.split()
@@ -108,7 +111,8 @@ def localEnsemblDatabase ( s ):
             ensNamesDB[gene_symbol] = gene_id
         fh.close()
 
-        fh = open ( "/Users/sheila/Data/Ensembl/GTF/protein_id.map.tsv" )
+        ## fh = open ( "/Users/sheila/Data/Ensembl/GTF/protein_id.map.tsv" )
+        fh = open ( "/home/sheila/Ensembl/GTF/protein_id.map.tsv" )
         for aLine in fh:
             aLine = aLine.strip()
             tList = aLine.split()
@@ -119,7 +123,8 @@ def localEnsemblDatabase ( s ):
             enspDB[protein_id] = gene_symbol
         fh.close()
 
-        fh = open ( "/Users/sheila/Data/Ensembl/GTF/transcript_id.map.tsv" )
+        ## fh = open ( "/Users/sheila/Data/Ensembl/GTF/transcript_id.map.tsv" )
+        fh = open ( "/home/sheila/Ensembl/GTF/transcript_id.map.tsv" )
         for aLine in fh:
             aLine = aLine.strip()
             tList = aLine.split()
@@ -155,7 +160,8 @@ def localHGNCdatabase ( s ):
 
     if ( len(hgncDB) == 0 ):
         print ( " --> opening local HGNC database file ... " )
-        fh = open( "/Users/sheila/Data/RefSeq/HGNC_genes.tsv", 'r' )
+        ## fh = open( "/Users/sheila/Data/RefSeq/HGNC_genes.tsv", 'r' )
+        fh = open( "/home/sheila/RefSeq/HGNC_genes.tsv", 'r' )
         for aLine in fh:
             aLine = aLine.strip()
             tList = aLine.split()
@@ -193,7 +199,8 @@ def localVEPdatabase ( s, d ):
 
     if ( len(vepInfoDB) == 0 ):
         print ( " --> opening local VEP database file ... " )
-        fh = open( "/Users/sheila/Data/Ensembl/VEP/vepInfoDB.GRCh37.json", 'r' )
+        ## fh = open( "/Users/sheila/Data/Ensembl/VEP/vepInfoDB.GRCh37.json", 'r' )
+        fh = open( "/home/sheila/Ensembl/VEP/vepInfoDB.GRCh37.json", 'r' )
         for aLine in fh:
             print ( aLine )
             aLine = aLine.strip()
@@ -2350,7 +2357,7 @@ def fixListOrder ( z, aGene ):
 ##     after "first pass" we have:  ['ASXL1 c.2083C>T: p.Q695X']
 ##     after "second pass" we have: ['ASXL1', 'c.2083C>T', 'p.Q695X']
 
-def handleFreeAlterationText ( u ):
+def handleFreeAlterationText ( u, vepFlag ):
 
     ## special hack
     if ( u.lower() == "not available" ): return ( {} )
@@ -2371,7 +2378,7 @@ def handleFreeAlterationText ( u ):
         print ( " --> special hack changing {%s} to {%s} " % ( u, nu ) )
         u = nu
 
-    print ( " ... in handleFreeAlterationText ... ", type(u), len(u), u )
+    print ( " ... in handleFreeAlterationText ... ", type(u), len(u), u, vepFlag )
 
     ## initialize the "return dict" ...
     rd = {}
@@ -2582,32 +2589,33 @@ def handleFreeAlterationText ( u ):
             ## and we also have some HGVS abbreviations ... if we have 'c.' or 'p.' we'll 
             ## try to use either of those to call VEP ...
             vepInfo = {}
-            if ( cDot != '' ):
-                vepInfo = callEnsemblVEP ( foundGenes[0]['symbol'], cDot )
-                if ( len(vepInfo) == 0 ):
-                    if ( 'ensembl_gene' in foundIds ):
-                        if ( foundIds['ensembl_gene'] != foundGenes[0]['symbol'] ):
-                             print ( " --> trying again with ensembl_gene ... " )
-                             vepInfo = callEnsemblVEP ( foundIds['ensembl_gene'], cDot )
-                if ( len(vepInfo) == 0 ):
-                    if ( 'refseq_gene' in foundIds ):
-                        if ( foundIds['refseq_gene'] != foundGenes[0]['symbol'] ):
-                             print ( " --> trying again with refseq_gene ... " )
-                             vepInfo = callEnsemblVEP ( foundIds['refseq_gene'], cDot )
-
-            if ( len(vepInfo) == 0 ):
-                if ( pDot != '' ):
-                    vepInfo = callEnsemblVEP ( foundGenes[0]['symbol'], pDot )
+            if ( vepFlag == "withVEP" ):
+                if ( cDot != '' ):
+                    vepInfo = callEnsemblVEP ( foundGenes[0]['symbol'], cDot )
                     if ( len(vepInfo) == 0 ):
                         if ( 'ensembl_gene' in foundIds ):
                             if ( foundIds['ensembl_gene'] != foundGenes[0]['symbol'] ):
-                                print ( " --> trying again with ensembl_gene ... " )
-                                vepInfo = callEnsemblVEP ( foundIds['ensembl_gene'], pDot )
+                                 print ( " --> trying again with ensembl_gene ... " )
+                                 vepInfo = callEnsemblVEP ( foundIds['ensembl_gene'], cDot )
                     if ( len(vepInfo) == 0 ):
                         if ( 'refseq_gene' in foundIds ):
                             if ( foundIds['refseq_gene'] != foundGenes[0]['symbol'] ):
-                                print ( " --> trying again with refseq_gene ... " )
-                                vepInfo = callEnsemblVEP ( foundIds['refseq_gene'], pDot )
+                                 print ( " --> trying again with refseq_gene ... " )
+                                 vepInfo = callEnsemblVEP ( foundIds['refseq_gene'], cDot )
+    
+                if ( len(vepInfo) == 0 ):
+                    if ( pDot != '' ):
+                        vepInfo = callEnsemblVEP ( foundGenes[0]['symbol'], pDot )
+                        if ( len(vepInfo) == 0 ):
+                            if ( 'ensembl_gene' in foundIds ):
+                                if ( foundIds['ensembl_gene'] != foundGenes[0]['symbol'] ):
+                                    print ( " --> trying again with ensembl_gene ... " )
+                                    vepInfo = callEnsemblVEP ( foundIds['ensembl_gene'], pDot )
+                        if ( len(vepInfo) == 0 ):
+                            if ( 'refseq_gene' in foundIds ):
+                                if ( foundIds['refseq_gene'] != foundGenes[0]['symbol'] ):
+                                    print ( " --> trying again with refseq_gene ... " )
+                                    vepInfo = callEnsemblVEP ( foundIds['refseq_gene'], pDot )
 
             if ( len(vepInfo) > 0 ):
                 print ( " got VEP info : ", vepInfo )
@@ -3334,7 +3342,7 @@ def extractAF(s):
 
 ##----------------------------------------------------------------------------------------------------
 
-def checkHGVS(s, p):
+def checkHGVS(s, vepFlag, p):
 
     if ( str(s) == 'nan' ): return ('')
     if ( s == '' ): return ('')
@@ -3370,7 +3378,7 @@ def checkHGVS(s, p):
         ## print ( "SVGH! <<<%s>>> " % u )
 
         ## ONLY PLACE WHERE handleFreeAlterationText is called ...
-        uDict = handleFreeAlterationText ( u )
+        uDict = handleFreeAlterationText ( u, vepFlag )
 
         if ( 'free_text' in uDict ):
             print ( " NOTA BENE !!! wound up with some FREE_TEXT here ... ", uDict['free_text'] )
@@ -3622,7 +3630,14 @@ class DataTable:
                         p = xConfig["addTerm"]
                     else:
                         p = ''
-                    x = x.apply (checkHGVS, args=(p,))
+                    x = x.apply (checkHGVS, args=("withVEP",p,))
+            if ( "HGVS_noVEP" in xConfig ):
+                if ( xConfig['HGVS_noVEP'] == "True" ):
+                    if ( "addTerm" in xConfig ):
+                        p = xConfig["addTerm"]
+                    else:
+                        p = ''
+                    x = x.apply (checkHGVS, args=("noVEP",p,))
 
         if ("allowed" in xConfig):
             aList = xConfig['allowed']
