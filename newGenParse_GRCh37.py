@@ -1022,7 +1022,6 @@ def hackDate(s):
 # ----------------------------------------------------------------------------------------------------
 # handle the 'standard' types ...
 
-
 def handleStandardType(s, p):
 
     if (s == ''):
@@ -1069,7 +1068,16 @@ def handleStandardType(s, p):
             ## 09-mar-2020: returning a string now
             return ( str(u) )
         except:
-            print(" UHOH FAILED to interpret as datetime ??? ", s)
+            print(" warning ... failed at first attempt to interpret as datetime ??? ", s)
+            try:
+                jd = json.loads(s)
+                idt = int(jd['$date']['$numberLong'])/1000000
+                dt = datetime.datetime.fromtimestamp(idt)
+                u = str(dt.isoformat())[:23]
+                print (" --> returning DATETIME <%s> " % u )
+                return ( str(u) )
+            except:
+                print(" UHOH ... totally FAILED to interpret as datetime ... ", s)
 
     elif (p == "date"):
         ## KNOWN BUG: if the input date is like 06/18/15
@@ -1085,7 +1093,16 @@ def handleStandardType(s, p):
             return (u)
         except:
             if (s == "00/00/0000"): return ('')
-            print (" UHOH FAILED to interpret as date ??? ", s )
+            print (" warning ... failed at first attempt to interpret as date ??? ", s )
+            try:
+                jd = json.loads(s)
+                idt = int(jd['$date']['$numberLong'])/1000000
+                dt = datetime.datetime.fromtimestamp(idt)
+                u = str(dt.isoformat())[:10]
+                print (" --> returning DATE <%s> (derived from input string %s) " % ( u, s ) )
+                return ( str(u) )
+            except:
+                print(" UHOH ... totally FAILED to interpret as date ... ", s)
 
     elif (p == "integer"):
         try:
@@ -3192,6 +3209,13 @@ def threeLetterAAs(s):
             done = True
             break
 
+        ## if we have a '*' we want to just leave that as is ... rather than changing it to "Ter" 
+        if ( s[ii] == '*' ): ii += 1
+
+        if ( ii >= len(s) ): 
+            done = True
+            break
+
         ## next we grab the next 3 letters and see if they are in aa3_upper
         t = s[ii:min(ii+3,len(s))]
         ## print ( ii, done, t, s )
@@ -3199,23 +3223,29 @@ def threeLetterAAs(s):
             ## print ( "     --> %s is a valid 3-letter abbreviation " % t )
             ii += 3
 
+        ## another thing to check for is if it's the string "ext" ...
+        elif ( t == "ext" ):
+            ii += 3
+
         ## if they are not, they try for a single-character match ...
         else:
-            if ( s[ii] in aa1 ):
-                ## print ( "     --> %s is a valid 1-letter abbreviation " % s[ii] )
-                ns = standard_aa_names[aa1.find(s[ii])]
-                ## print ( "     --> subbing in %s for %s " % ( ns, s[ii] ) )
-                s = s[:ii] + ns + s[ii+1:]
-                ## print ( "     --> got : ", s )
-                ii += 3
-            ## sometimes it seems like 'x' is used instead of 'X'
-            ## so we'll allow it ...
-            elif ( s[ii] == 'x' ):
-                ns = standard_aa_names[aa1.find('X')]
-                s = s[:ii] + ns + s[ii+1:]
-                ii += 3
-            else:
-                ii += 1
+            if ( ii < len(s) ):
+                if ( s[ii] in aa1 ):
+                    ## print ( "     --> %s is a valid 1-letter abbreviation " % s[ii] )
+                    ns = standard_aa_names[aa1.find(s[ii])]
+                    ## print ( "     --> subbing in %s for %s " % ( ns, s[ii] ) )
+                    s = s[:ii] + ns + s[ii+1:]
+                    ## print ( "     --> got : ", s )
+                    ii += 3
+                ## sometimes it seems like 'x' is used instead of 'X'
+                ## so we'll allow it ...
+                elif ( s[ii] == 'x' ):
+                    ns = standard_aa_names[aa1.find('X')]
+                    s = s[:ii] + ns + s[ii+1:]
+                    ii += 3
+                else:
+                    ii += 1
+
         if ( ii >= len(s) ): done = True
 
     ## final check because I saw something weird ...
@@ -3426,11 +3456,16 @@ def checkHGVS(s, vepFlag, p):
 
 def quickStrip(s):
 
+    if ( s is None ): 
+        return ('')
+
     if (str(s) == 'nan'):
         return ('')
 
+    if (str(s) == 'null'):
+        return ('')
+
     logging.debug("in quickStrip ... <%s>" % str(s)[:88])
-    ## print (" in quickStrip ... <%s> " % s )
 
     t = ''
     for u in s.splitlines():
